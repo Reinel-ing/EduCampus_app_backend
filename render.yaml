@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: educampus-backend
+    name: educampus-app-api-colmas
     runtime: python
     plan: free
     buildCommand: "pip install -r requirements.txt && alembic upgrade head"
