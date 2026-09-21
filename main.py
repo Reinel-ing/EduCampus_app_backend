@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
@@ -1508,6 +1508,14 @@ PERIODOS_VALIDOS = {"I", "II", "III", "IV"}
 
 DIRECTOR_NOMBRE = os.getenv("DIRECTOR_NOMBRE", "MARIBEL ROJAS PAYARES")
 
+ASSETS_DIR = Path(__file__).parent / "assets"
+LOGO_COLMAS_PATH = ASSETS_DIR / "logo_colmas.png"
+FIRMA_DIRECTORA_PATH = ASSETS_DIR / "firma_directora.png"
+
+COLOR_DORADO = colors.HexColor("#F9C65F")
+COLOR_DORADO_CLARO = colors.HexColor("#FFFFCC")
+COLOR_MARRON = colors.HexColor("#8B5E34")
+
 
 def calcular_desempeno(score: float) -> str:
 
@@ -1633,7 +1641,8 @@ def descargar_boletin(
         "TituloInforme",
         parent=estilos["Title"],
         fontSize=16,
-        spaceAfter=4
+        spaceAfter=4,
+        textColor=COLOR_MARRON
     )
 
     estilo_area = ParagraphStyle(
@@ -1641,7 +1650,7 @@ def descargar_boletin(
         parent=estilos["Normal"],
         fontName="Helvetica-Bold",
         fontSize=10,
-        textColor=colors.white
+        textColor=COLOR_MARRON
     )
 
     estilo_logro = ParagraphStyle(
@@ -1660,8 +1669,44 @@ def descargar_boletin(
 
     elementos = []
 
-    elementos.append(Paragraph("EduCampus · Colegio Manantial de Sabiduría (COLMAS)", estilos["Heading4"]))
+    if LOGO_COLMAS_PATH.exists():
+
+        logo = Image(str(LOGO_COLMAS_PATH), width=70, height=70)
+        logo.hAlign = "CENTER"
+
+        encabezado_institucion = Table(
+            [[logo, Paragraph(
+                "<b>Colegio Manantial de Sabiduría</b><br/>\"COLMAS\"<br/>"
+                "El principio de la sabiduría es el temor de Jehová. Prov. 1:7",
+                ParagraphStyle(
+                    "InstitucionTexto",
+                    parent=estilos["Normal"],
+                    fontSize=9,
+                    textColor=COLOR_MARRON,
+                    alignment=1
+                )
+            )]],
+            colWidths=[80, 400]
+        )
+        encabezado_institucion.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+        ]))
+
+        elementos.append(encabezado_institucion)
+
+    else:
+
+        elementos.append(Paragraph("Colegio Manantial de Sabiduría (COLMAS)", estilos["Heading4"]))
+
+    elementos.append(Spacer(1, 6))
     elementos.append(Paragraph("Informe académico", estilo_titulo))
+
+    linea_separadora = Table([[""]], colWidths=[480], rowHeights=[2])
+    linea_separadora.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, -1), 1.5, COLOR_MARRON),
+    ]))
+    elementos.append(linea_separadora)
     elementos.append(Spacer(1, 10))
 
     info_estudiante = [
@@ -1697,14 +1742,15 @@ def descargar_boletin(
         ) or "Sin logros registrados"
 
         encabezado = Table(
-            [[Paragraph(nombre_area, estilo_area)]],
-            colWidths=[480]
+            [[Paragraph(nombre_area, estilo_area), Paragraph("DESEMPEÑO", estilo_area)]],
+            colWidths=[340, 140]
         )
         encabezado.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#2c3e50")),
+            ("BACKGROUND", (0, 0), (-1, -1), COLOR_DORADO),
             ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("ALIGN", (1, 0), (1, 0), "CENTER"),
         ]))
 
         cuerpo = Table(
@@ -1716,8 +1762,10 @@ def descargar_boletin(
             colWidths=[340, 80, 60]
         )
         cuerpo.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MARRON),
+            ("BACKGROUND", (0, 0), (-1, -1), COLOR_DORADO_CLARO),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 0), (2, 0), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
@@ -1728,17 +1776,42 @@ def descargar_boletin(
         elementos.append(Spacer(1, 10))
 
     elementos.append(Spacer(1, 10))
-    elementos.append(Paragraph("<b>OBSERVACIONES</b>", estilos["Heading4"]))
-    elementos.append(Paragraph(
-        observacion.texto if observacion else "Sin observaciones registradas.",
-        estilo_observaciones
-    ))
 
-    elementos.append(Spacer(1, 50))
+    encabezado_obs = Table([[Paragraph("OBSERVACIONES", estilo_area)]], colWidths=[480])
+    encabezado_obs.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COLOR_DORADO),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(encabezado_obs)
+
+    cuerpo_obs = Table(
+        [[Paragraph(
+            observacion.texto if observacion else "Sin observaciones registradas.",
+            estilo_observaciones
+        )]],
+        colWidths=[480]
+    )
+    cuerpo_obs.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MARRON),
+        ("BACKGROUND", (0, 0), (-1, -1), COLOR_DORADO_CLARO),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elementos.append(cuerpo_obs)
+
+    elementos.append(Spacer(1, 40))
+
+    if FIRMA_DIRECTORA_PATH.exists():
+        firma_directora_img = Image(str(FIRMA_DIRECTORA_PATH), width=110, height=55)
+    else:
+        firma_directora_img = Paragraph("_____________________________________", estilos["Normal"])
 
     firmas = [
         [
-            Paragraph("_____________________________________", estilos["Normal"]),
+            firma_directora_img,
             Paragraph("_____________________________________", estilos["Normal"]),
         ],
         [
@@ -1751,9 +1824,10 @@ def descargar_boletin(
         ],
     ]
 
-    tabla_firmas = Table(firmas, colWidths=[240, 240])
+    tabla_firmas = Table(firmas, colWidths=[240, 240], rowHeights=[60, None, None])
     tabla_firmas.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),
     ]))
 
     elementos.append(tabla_firmas)
