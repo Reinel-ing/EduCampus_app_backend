@@ -1,0 +1,1773 @@
+﻿
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+import io
+import secrets
+import shutil
+import uuid
+
+from fastapi import FastAPI, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from passlib.context import CryptContext
+from dotenv import load_dotenv
+
+import os
+import models
+import schemas
+
+from database import get_db
+
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+load_dotenv()
+
+
+# ============================================================
+# SEGURIDAD
+# ============================================================
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto"
+)
+
+
+# ============================================================
+# SESIONES SENCILLAS
+# ============================================================
+
+# Las sesiones se guardan temporalmente en memoria.
+# Se pierden cuando se reinicia el servidor.
+
+sesiones = {}
+
+
+# ============================================================
+# ALMACENAMIENTO DE ARCHIVOS
+# ============================================================
+
+UPLOAD_DIR = Path(__file__).parent / "uploads" / "entregas"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+DOCUMENTO_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".txt"}
+
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+
+# ============================================================
+# APLICACIÓN FASTAPI
+# ============================================================
+
+app = FastAPI(
+    title="EduCampus API",
+    description="API backend de la plataforma educativa EduCampus",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# FUNCIONES DE SEGURIDAD
+# ============================================================
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(
+    plain_password: str,
+    hashed_password: str
+) -> bool:
+
+    return pwd_context.verify(
+        plain_password,
+        hashed_password
+    )
+
+
+def requerir_admin(access_token: str) -> dict:
+
+    sesion = sesiones.get(access_token)
+
+    if not sesion:
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión no válida o expirada"
+        )
+
+    if sesion["rol"] != "administrador":
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede registrar nuevos usuarios"
+        )
+
+    return sesion
+
+
+# ============================================================
+# BÚSQUEDA DE CUENTAS EN LAS TABLAS POR ROL
+# ============================================================
+
+def buscar_cuenta_por_correo(db: Session, correo: str):
+
+    correo = correo.lower().strip()
+
+    admin = (
+        db.query(models.Administrador)
+        .filter(models.Administrador.correo == correo)
+        .first()
+    )
+
+    if admin:
+        return admin, "administrador"
+
+    profesor = (
+        db.query(models.Profesor)
+        .filter(models.Profesor.correo == correo)
+        .first()
+    )
+
+    if profesor:
+        return profesor, "profesor"
+
+    acudiente = (
+        db.query(models.Acudiente)
+        .filter(models.Acudiente.correo == correo)
+        .first()
+    )
+
+    if acudiente:
+        return acudiente, "acudiente"
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(models.Estudiante.correo == correo)
+        .first()
+    )
+
+    if estudiante:
+        return estudiante, "estudiante"
+
+    return None, None
+
+
+def correo_en_uso(db: Session, correo: str) -> bool:
+
+    cuenta, _ = buscar_cuenta_por_correo(db, correo)
+
+    return cuenta is not None
+
+
+# ============================================================
+# RUTA PRINCIPAL
+# ============================================================
+
+@app.get("/")
+def read_root():
+
+    return {
+        "message": "Bienvenido a la API de EduCampus",
+        "status": "online",
+        "database": "PostgreSQL / Neon"
+    }
+
+
+# ============================================================
+# PRUEBA DE BASE DE DATOS
+# ============================================================
+
+@app.get("/health")
+def health_check(
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        from sqlalchemy import text
+
+        db.execute(text("SELECT 1"))
+
+        return {
+            "status": "ok",
+            "database": "conectada"
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error conectando con PostgreSQL: {str(e)}"
+        )
+
+
+# ============================================================
+# AUTENTICACIÓN - REGISTRO
+# ============================================================
+
+@app.post(
+    "/auth/registro/",
+    response_model=schemas.UsuarioResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def registrar_usuario(
+    usuario: schemas.UsuarioCreate,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    correo = str(
+        usuario.correo
+    ).lower().strip()
+
+    if correo_en_uso(db, correo):
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo ya está registrado en el sistema"
+        )
+
+    rol = usuario.rol.lower().strip()
+    password_hash = hash_password(usuario.password)
+    nombre = usuario.nombre.strip()
+
+    if rol == "administrador":
+
+        nueva_cuenta = models.Administrador(
+            nombre=nombre,
+            correo=correo,
+            password_hash=password_hash
+        )
+
+    elif rol in ("profesor", "docente"):
+
+        rol = "profesor"
+
+        nueva_cuenta = models.Profesor(
+            nombre=nombre,
+            correo=correo,
+            password_hash=password_hash,
+            especialidad=usuario.especialidad
+        )
+
+    elif rol == "acudiente":
+
+        nueva_cuenta = models.Acudiente(
+            nombre=nombre,
+            correo=correo,
+            password_hash=password_hash,
+            telefono=usuario.telefono
+        )
+
+    else:
+
+        if usuario.grado_id is not None:
+
+            grado = (
+                db.query(models.Grado)
+                .filter(models.Grado.id == usuario.grado_id)
+                .first()
+            )
+
+            if not grado:
+
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="El grado indicado no existe"
+                )
+
+        if usuario.acudiente_id is not None:
+
+            acudiente = (
+                db.query(models.Acudiente)
+                .filter(models.Acudiente.id == usuario.acudiente_id)
+                .first()
+            )
+
+            if not acudiente:
+
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="El acudiente indicado no existe"
+                )
+
+        nueva_cuenta = models.Estudiante(
+            nombre=nombre,
+            correo=correo,
+            password_hash=password_hash,
+            grado_id=usuario.grado_id,
+            acudiente_id=usuario.acudiente_id
+        )
+
+    try:
+
+        db.add(nueva_cuenta)
+        db.commit()
+        db.refresh(nueva_cuenta)
+
+    except IntegrityError:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fue posible registrar el usuario"
+        )
+
+    return {
+        "id": nueva_cuenta.id,
+        "nombre": nueva_cuenta.nombre,
+        "correo": nueva_cuenta.correo,
+        "rol": rol
+    }
+
+
+# ============================================================
+# AUTENTICACIÓN - RESTABLECER CONTRASEÑA
+# ============================================================
+
+@app.post("/auth/restablecer-password/")
+def restablecer_password(
+    solicitud: schemas.RestablecerPasswordRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    correo = str(solicitud.correo).lower().strip()
+
+    cuenta, rol = buscar_cuenta_por_correo(db, correo)
+
+    if not cuenta:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No existe ninguna cuenta con ese correo"
+        )
+
+    rol_solicitado = solicitud.rol.lower().strip()
+
+    if rol_solicitado in ("profesor", "docente"):
+        rol_solicitado = "profesor"
+
+    if rol_solicitado != rol:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El rol indicado no coincide con la cuenta encontrada"
+        )
+
+    cuenta.password_hash = hash_password(solicitud.password)
+
+    db.commit()
+
+    return {
+        "correo": cuenta.correo,
+        "rol": rol,
+        "message": "Contraseña restablecida correctamente"
+    }
+
+
+# ============================================================
+# AUTENTICACIÓN - LOGIN
+# ============================================================
+
+@app.post(
+    "/auth/login/",
+    response_model=schemas.TokenResponse
+)
+def iniciar_sesion(
+    credenciales: schemas.LoginRequest,
+    db: Session = Depends(get_db)
+):
+
+    correo = str(
+        credenciales.correo
+    ).lower().strip()
+
+    usuario, rol = buscar_cuenta_por_correo(db, correo)
+
+    # --------------------------------------------------------
+    # USUARIO NO EXISTE
+    # --------------------------------------------------------
+
+    if not usuario:
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Correo o contraseña incorrectos"
+        )
+
+    # --------------------------------------------------------
+    # CONTRASEÑA INCORRECTA
+    # --------------------------------------------------------
+
+    if not verify_password(
+        credenciales.password,
+        usuario.password_hash
+    ):
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Correo o contraseña incorrectos"
+        )
+
+    # --------------------------------------------------------
+    # CREAR SESIÓN
+    # --------------------------------------------------------
+
+    session_id = secrets.token_urlsafe(32)
+
+    sesiones[session_id] = {
+        "usuario_id": usuario.id,
+        "correo": usuario.correo,
+        "nombre": usuario.nombre,
+        "rol": rol,
+        "creada": datetime.utcnow()
+    }
+
+    # --------------------------------------------------------
+    # RESPUESTA
+    # --------------------------------------------------------
+
+    return {
+        "access_token": session_id,
+        "token_type": "session",
+        "rol": rol,
+        "nombre": usuario.nombre
+    }
+
+
+# ============================================================
+# CERRAR SESIÓN
+# ============================================================
+
+@app.post("/auth/logout/")
+def cerrar_sesion(
+    access_token: str
+):
+
+    if access_token in sesiones:
+
+        del sesiones[access_token]
+
+        return {
+            "message": "Sesión cerrada correctamente"
+        }
+
+    return {
+        "message": "La sesión ya estaba cerrada"
+    }
+
+
+# ============================================================
+# VERIFICAR SESIÓN
+# ============================================================
+
+@app.get("/auth/session/")
+def verificar_sesion(
+    access_token: str
+):
+
+    sesion = sesiones.get(access_token)
+
+    if not sesion:
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión no válida o expirada"
+        )
+
+    return {
+        "authenticated": True,
+        "usuario_id": sesion["usuario_id"],
+        "correo": sesion["correo"],
+        "nombre": sesion["nombre"],
+        "rol": sesion["rol"]
+    }
+
+
+# ============================================================
+# GRADOS
+# ============================================================
+
+@app.post(
+    "/grados/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_grado(
+    grado: schemas.GradoCreate,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Grado)
+        .filter(
+            models.Grado.nombre == grado.nombre
+        )
+        .first()
+    )
+
+    if existente:
+
+        raise HTTPException(
+            status_code=400,
+            detail="El grado ya existe"
+        )
+
+    if grado.director_grupo_id is not None:
+
+        profesor = (
+            db.query(models.Profesor)
+            .filter(models.Profesor.id == grado.director_grupo_id)
+            .first()
+        )
+
+        if not profesor:
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="El profesor indicado como director de grupo no existe"
+            )
+
+    nuevo_grado = models.Grado(
+        nombre=grado.nombre.strip(),
+        es_preescolar=grado.es_preescolar,
+        director_grupo_id=grado.director_grupo_id
+    )
+
+    db.add(nuevo_grado)
+    db.commit()
+    db.refresh(nuevo_grado)
+
+    return nuevo_grado
+
+
+@app.get("/grados/")
+def listar_grados(
+    db: Session = Depends(get_db)
+):
+
+    return db.query(
+        models.Grado
+    ).all()
+
+
+@app.put("/grados/{grado_id}")
+def editar_grado(
+    grado_id: int,
+    grado: schemas.GradoCreate,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Grado)
+        .filter(models.Grado.id == grado_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El grado no existe"
+        )
+
+    duplicado = (
+        db.query(models.Grado)
+        .filter(
+            models.Grado.nombre == grado.nombre,
+            models.Grado.id != grado_id
+        )
+        .first()
+    )
+
+    if duplicado:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya existe un grado con ese nombre"
+        )
+
+    existente.nombre = grado.nombre.strip()
+    existente.es_preescolar = grado.es_preescolar
+    existente.director_grupo_id = grado.director_grupo_id
+
+    db.commit()
+    db.refresh(existente)
+
+    return existente
+
+
+@app.delete("/grados/{grado_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_grado(
+    grado_id: int,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Grado)
+        .filter(models.Grado.id == grado_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El grado no existe"
+        )
+
+    db.delete(existente)
+    db.commit()
+
+
+# ============================================================
+# ACUDIENTES
+# ============================================================
+
+@app.get(
+    "/acudientes/",
+    response_model=List[schemas.AcudienteResponse]
+)
+def listar_acudientes(
+    db: Session = Depends(get_db)
+):
+
+    return db.query(
+        models.Acudiente
+    ).all()
+
+
+# ============================================================
+# ESTUDIANTES
+# ============================================================
+
+@app.get(
+    "/estudiantes/",
+    response_model=List[schemas.EstudianteResponse]
+)
+def listar_estudiantes(
+    db: Session = Depends(get_db)
+):
+
+    return db.query(
+        models.Estudiante
+    ).all()
+
+
+# ============================================================
+# PROFESORES
+# ============================================================
+
+@app.get(
+    "/profesores/",
+    response_model=List[schemas.ProfesorResponse]
+)
+def listar_profesores(
+    db: Session = Depends(get_db)
+):
+
+    return db.query(
+        models.Profesor
+    ).all()
+
+
+# ============================================================
+# CURSOS
+# ============================================================
+
+@app.post(
+    "/cursos/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_curso(
+    curso: schemas.CursoCreate,
+    db: Session = Depends(get_db)
+):
+
+    profesor = (
+        db.query(models.Profesor)
+        .filter(
+            models.Profesor.id ==
+            curso.instructor_id
+        )
+        .first()
+    )
+
+    if not profesor:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El profesor indicado no existe"
+        )
+
+    if curso.grado_id is not None:
+
+        grado = (
+            db.query(models.Grado)
+            .filter(
+                models.Grado.id ==
+                curso.grado_id
+            )
+            .first()
+        )
+
+        if not grado:
+
+            raise HTTPException(
+                status_code=404,
+                detail="El grado indicado no existe"
+            )
+
+    nuevo_curso = models.Curso(
+        title=curso.title.strip(),
+        description=curso.description,
+        instructor_id=curso.instructor_id,
+        grado_id=curso.grado_id
+    )
+
+    db.add(nuevo_curso)
+    db.commit()
+    db.refresh(nuevo_curso)
+
+    return nuevo_curso
+
+
+@app.get("/cursos/")
+def listar_cursos(
+    db: Session = Depends(get_db)
+):
+
+    return db.query(
+        models.Curso
+    ).all()
+
+
+# ============================================================
+# MATRÍCULAS
+# ============================================================
+
+@app.post(
+    "/matriculas/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_matricula(
+    mat: schemas.MatriculaCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(
+            models.Estudiante.id ==
+            mat.student_id
+        )
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El estudiante no existe"
+        )
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            mat.course_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    existente = (
+        db.query(models.Matricula)
+        .filter(
+            models.Matricula.student_id ==
+            mat.student_id,
+            models.Matricula.course_id ==
+            mat.course_id
+        )
+        .first()
+    )
+
+    if existente:
+
+        raise HTTPException(
+            status_code=400,
+            detail="El estudiante ya está matriculado en este curso"
+        )
+
+    nueva_matricula = models.Matricula(
+        student_id=mat.student_id,
+        course_id=mat.course_id
+    )
+
+    db.add(nueva_matricula)
+    db.commit()
+    db.refresh(nueva_matricula)
+
+    return nueva_matricula
+
+
+# ============================================================
+# CALIFICACIONES
+# ============================================================
+
+@app.post(
+    "/calificaciones/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_calificacion(
+    cal: schemas.CalificacionCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(
+            models.Estudiante.id ==
+            cal.student_id
+        )
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El estudiante no existe"
+        )
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            cal.course_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    existente = (
+        db.query(models.Calificacion)
+        .filter(
+            models.Calificacion.student_id == cal.student_id,
+            models.Calificacion.course_id == cal.course_id,
+            models.Calificacion.periodo == cal.periodo
+        )
+        .first()
+    )
+
+    if existente:
+
+        existente.score = cal.score
+        existente.logro = cal.logro
+        existente.fecha = datetime.utcnow()
+
+        db.commit()
+        db.refresh(existente)
+
+        return existente
+
+    nueva_calificacion = models.Calificacion(
+        student_id=cal.student_id,
+        course_id=cal.course_id,
+        score=cal.score,
+        logro=cal.logro,
+        periodo=cal.periodo
+    )
+
+    db.add(nueva_calificacion)
+    db.commit()
+    db.refresh(nueva_calificacion)
+
+    return nueva_calificacion
+
+
+# ============================================================
+# OBSERVACIONES DEL BOLETÍN
+# ============================================================
+
+@app.post(
+    "/observaciones/",
+    response_model=schemas.ObservacionResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def guardar_observacion(
+    obs: schemas.ObservacionCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(models.Estudiante.id == obs.student_id)
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El estudiante no existe"
+        )
+
+    existente = (
+        db.query(models.Observacion)
+        .filter(
+            models.Observacion.student_id == obs.student_id,
+            models.Observacion.periodo == obs.periodo
+        )
+        .first()
+    )
+
+    if existente:
+
+        existente.texto = obs.texto
+        existente.fecha = datetime.utcnow()
+
+        db.commit()
+        db.refresh(existente)
+
+        return existente
+
+    nueva_observacion = models.Observacion(
+        student_id=obs.student_id,
+        periodo=obs.periodo,
+        texto=obs.texto
+    )
+
+    db.add(nueva_observacion)
+    db.commit()
+    db.refresh(nueva_observacion)
+
+    return nueva_observacion
+
+
+@app.get(
+    "/observaciones/{student_id}/{periodo}",
+    response_model=schemas.ObservacionResponse
+)
+def obtener_observacion(
+    student_id: int,
+    periodo: str,
+    db: Session = Depends(get_db)
+):
+
+    observacion = (
+        db.query(models.Observacion)
+        .filter(
+            models.Observacion.student_id == student_id,
+            models.Observacion.periodo == periodo.upper()
+        )
+        .first()
+    )
+
+    if not observacion:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No hay observación registrada para este periodo"
+        )
+
+    return observacion
+
+
+# ============================================================
+# ASISTENCIAS
+# ============================================================
+
+@app.post(
+    "/asistencias/",
+    status_code=status.HTTP_201_CREATED
+)
+def registrar_asistencia(
+    asis: schemas.AsistenciaCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(
+            models.Estudiante.id ==
+            asis.student_id
+        )
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El estudiante no existe"
+        )
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            asis.course_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    nueva_asistencia = models.Asistencia(
+        student_id=asis.student_id,
+        course_id=asis.course_id,
+        status=asis.status,
+        fecha=asis.fecha or datetime.utcnow().date()
+    )
+
+    db.add(nueva_asistencia)
+    db.commit()
+    db.refresh(nueva_asistencia)
+
+    return nueva_asistencia
+
+
+# ============================================================
+# CONVIVENCIA
+# ============================================================
+
+@app.post(
+    "/convivencia/",
+    status_code=status.HTTP_201_CREATED
+)
+def registrar_convivencia(
+    conv: schemas.ConvivenciaCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(
+            models.Estudiante.id ==
+            conv.student_id
+        )
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El estudiante no existe"
+        )
+
+    nuevo_registro = models.Convivencia(
+        student_id=conv.student_id,
+        observacion=conv.observacion,
+        tipo=conv.tipo,
+        fecha=conv.fecha or datetime.utcnow().date()
+    )
+
+    db.add(nuevo_registro)
+    db.commit()
+    db.refresh(nuevo_registro)
+
+    return nuevo_registro
+
+
+# ============================================================
+# ALERTAS
+# ============================================================
+
+@app.post(
+    "/alertas/",
+    status_code=status.HTTP_201_CREATED
+)
+def registrar_alerta(
+    alerta: schemas.AlertaCreate,
+    db: Session = Depends(get_db)
+):
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(
+            models.Estudiante.id ==
+            alerta.student_id
+        )
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El estudiante no existe"
+        )
+
+    nueva_alerta = models.AlertaAlumno(
+        student_id=alerta.student_id,
+        mensaje=alerta.mensaje,
+        severidad=alerta.severidad
+    )
+
+    db.add(nueva_alerta)
+    db.commit()
+    db.refresh(nueva_alerta)
+
+    return nueva_alerta
+
+
+# ============================================================
+# MATERIAL DIDÁCTICO
+# ============================================================
+
+@app.post(
+    "/materiales/",
+    status_code=status.HTTP_201_CREATED
+)
+def subir_material(
+    mat: schemas.MaterialCreate,
+    db: Session = Depends(get_db)
+):
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            mat.curso_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    nuevo_material = models.MaterialDidactico(
+        curso_id=mat.curso_id,
+        titulo=mat.titulo,
+        archivo_url=mat.archivo_url
+    )
+
+    db.add(nuevo_material)
+    db.commit()
+    db.refresh(nuevo_material)
+
+    return nuevo_material
+
+
+# ============================================================
+# TAREAS
+# ============================================================
+
+@app.post(
+    "/tareas/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_tarea(
+    tar: schemas.TareaCreate,
+    db: Session = Depends(get_db)
+):
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            tar.curso_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    nueva_tarea = models.Tarea(
+        curso_id=tar.curso_id,
+        titulo=tar.titulo,
+        descripcion=tar.descripcion,
+        fecha_entrega=tar.fecha_entrega,
+        permite_video=tar.permite_video
+    )
+
+    db.add(nueva_tarea)
+    db.commit()
+    db.refresh(nueva_tarea)
+
+    return nueva_tarea
+
+
+# ============================================================
+# ENTREGAS DE ACTIVIDADES (el acudiente sube el trabajo)
+# ============================================================
+
+async def guardar_archivo_subido(
+    archivo: UploadFile,
+    destino: Path
+) -> None:
+
+    tamano = 0
+
+    with destino.open("wb") as buffer:
+
+        while True:
+
+            fragmento = await archivo.read(1024 * 1024)
+
+            if not fragmento:
+                break
+
+            tamano += len(fragmento)
+
+            if tamano > MAX_UPLOAD_BYTES:
+
+                buffer.close()
+                destino.unlink(missing_ok=True)
+
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El archivo supera el tamaño máximo permitido (200 MB)"
+                )
+
+            buffer.write(fragmento)
+
+
+@app.post(
+    "/tareas/{tarea_id}/entregas/",
+    response_model=schemas.EntregaResponse,
+    status_code=status.HTTP_201_CREATED
+)
+async def subir_entrega(
+    tarea_id: int,
+    student_id: int = Form(...),
+    acudiente_id: Optional[int] = Form(None),
+    comentario: Optional[str] = Form(None),
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+
+    tarea = (
+        db.query(models.Tarea)
+        .filter(models.Tarea.id == tarea_id)
+        .first()
+    )
+
+    if not tarea:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La actividad no existe"
+        )
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(models.Estudiante.id == student_id)
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El estudiante no existe"
+        )
+
+    if acudiente_id is not None:
+
+        acudiente = (
+            db.query(models.Acudiente)
+            .filter(models.Acudiente.id == acudiente_id)
+            .first()
+        )
+
+        if not acudiente:
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="El acudiente indicado no existe"
+            )
+
+    extension = Path(archivo.filename or "").suffix.lower()
+    es_video = extension in VIDEO_EXTENSIONS
+
+    if es_video and not tarea.permite_video:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta actividad no admite el envío de videos"
+        )
+
+    if not es_video and extension not in DOCUMENTO_EXTENSIONS:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de archivo no permitido"
+        )
+
+    nombre_archivo = f"{uuid.uuid4().hex}{extension}"
+    destino = UPLOAD_DIR / nombre_archivo
+
+    await guardar_archivo_subido(archivo, destino)
+
+    nueva_entrega = models.TareaEntrega(
+        tarea_id=tarea_id,
+        student_id=student_id,
+        acudiente_id=acudiente_id,
+        archivo_path=str(destino.relative_to(UPLOAD_DIR.parent.parent)),
+        archivo_tipo="video" if es_video else "documento",
+        nombre_original=archivo.filename or nombre_archivo,
+        comentario=comentario
+    )
+
+    db.add(nueva_entrega)
+
+    try:
+
+        db.commit()
+        db.refresh(nueva_entrega)
+
+    except IntegrityError:
+
+        db.rollback()
+        destino.unlink(missing_ok=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya existe una entrega de este estudiante para esta actividad"
+        )
+
+    return nueva_entrega
+
+
+@app.get(
+    "/tareas/{tarea_id}/entregas/",
+    response_model=List[schemas.EntregaResponse]
+)
+def listar_entregas(
+    tarea_id: int,
+    db: Session = Depends(get_db)
+):
+
+    return (
+        db.query(models.TareaEntrega)
+        .filter(models.TareaEntrega.tarea_id == tarea_id)
+        .all()
+    )
+
+
+@app.get("/entregas/{entrega_id}/archivo")
+def descargar_entrega(
+    entrega_id: int,
+    db: Session = Depends(get_db)
+):
+
+    entrega = (
+        db.query(models.TareaEntrega)
+        .filter(models.TareaEntrega.id == entrega_id)
+        .first()
+    )
+
+    if not entrega:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La entrega no existe"
+        )
+
+    ruta_archivo = Path(__file__).parent / entrega.archivo_path
+
+    if not ruta_archivo.exists():
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El archivo ya no está disponible"
+        )
+
+    return FileResponse(
+        path=ruta_archivo,
+        filename=entrega.nombre_original
+    )
+
+
+# ============================================================
+# HORARIOS
+# ============================================================
+
+@app.post(
+    "/horarios/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_horario(
+    hor: schemas.HorarioCreate,
+    db: Session = Depends(get_db)
+):
+
+    curso = (
+        db.query(models.Curso)
+        .filter(
+            models.Curso.id ==
+            hor.curso_id
+        )
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=404,
+            detail="El curso no existe"
+        )
+
+    nuevo_horario = models.Horario(
+        curso_id=hor.curso_id,
+        dia_semana=hor.dia_semana,
+        hora_inicio=hor.hora_inicio,
+        hora_fin=hor.hora_fin
+    )
+
+    db.add(nuevo_horario)
+    db.commit()
+    db.refresh(nuevo_horario)
+
+    return nuevo_horario
+
+
+# ============================================================
+# COMUNICADOS
+# ============================================================
+
+@app.post(
+    "/comunicados/",
+    status_code=status.HTTP_201_CREATED
+)
+def crear_comunicado(
+    com: schemas.ComunicadoCreate,
+    db: Session = Depends(get_db)
+):
+
+    nuevo_comunicado = models.Comunicado(
+        remitente=com.remitente,
+        titulo=com.titulo,
+        mensaje=com.mensaje,
+        destinatario_rol=com.destinatario_rol,
+        fecha=com.fecha or datetime.utcnow()
+    )
+
+    db.add(nuevo_comunicado)
+    db.commit()
+    db.refresh(nuevo_comunicado)
+
+    return nuevo_comunicado
+
+
+# ============================================================
+# BOLETÍN EN PDF
+# ============================================================
+
+PERIODOS_VALIDOS = {"I", "II", "III", "IV"}
+
+DIRECTOR_NOMBRE = os.getenv("DIRECTOR_NOMBRE", "MARIBEL ROJAS PAYARES")
+
+
+def calcular_desempeno(score: float) -> str:
+
+    if score >= 4.6:
+        return "SUPERIOR"
+
+    if score >= 4.0:
+        return "ALTO"
+
+    if score >= 3.0:
+        return "BÁSICO"
+
+    return "BAJO"
+
+
+@app.get("/estudiantes/{estudiante_id}/boletin/")
+def descargar_boletin(
+    estudiante_id: int,
+    periodo: str = "I",
+    db: Session = Depends(get_db)
+):
+
+    periodo = periodo.strip().upper()
+
+    if periodo not in PERIODOS_VALIDOS:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El periodo debe ser I, II, III o IV"
+        )
+
+    estudiante = (
+        db.query(models.Estudiante)
+        .filter(models.Estudiante.id == estudiante_id)
+        .first()
+    )
+
+    if not estudiante:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El estudiante no existe"
+        )
+
+    matriculas = (
+        db.query(models.Matricula)
+        .filter(models.Matricula.student_id == estudiante_id)
+        .all()
+    )
+
+    if not matriculas:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El estudiante no está matriculado en ningún curso"
+        )
+
+    cursos_sin_notas = []
+    areas = []
+
+    for matricula in matriculas:
+
+        curso = matricula.curso
+
+        calificacion = (
+            db.query(models.Calificacion)
+            .filter(
+                models.Calificacion.student_id == estudiante_id,
+                models.Calificacion.course_id == curso.id,
+                models.Calificacion.periodo == periodo
+            )
+            .first()
+        )
+
+        if not calificacion:
+
+            cursos_sin_notas.append(curso.title)
+            continue
+
+        areas.append((curso, calificacion))
+
+    if cursos_sin_notas:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"No se puede generar el boletín del periodo {periodo} porque faltan notas en: "
+                + ", ".join(cursos_sin_notas)
+            )
+        )
+
+    observacion = (
+        db.query(models.Observacion)
+        .filter(
+            models.Observacion.student_id == estudiante_id,
+            models.Observacion.periodo == periodo
+        )
+        .first()
+    )
+
+    grado = estudiante.grado
+
+    docente_firma = None
+
+    if grado and grado.director_grupo:
+        docente_firma = grado.director_grupo.nombre
+    elif areas:
+        docente_firma = areas[0][0].profesor.nombre if areas[0][0].profesor else None
+
+    buffer = io.BytesIO()
+
+    documento = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        title=f"Informe académico - {estudiante.nombre}",
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    estilos = getSampleStyleSheet()
+
+    estilo_titulo = ParagraphStyle(
+        "TituloInforme",
+        parent=estilos["Title"],
+        fontSize=16,
+        spaceAfter=4
+    )
+
+    estilo_area = ParagraphStyle(
+        "AreaNombre",
+        parent=estilos["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        textColor=colors.white
+    )
+
+    estilo_logro = ParagraphStyle(
+        "LogroTexto",
+        parent=estilos["Normal"],
+        fontSize=9,
+        leading=12
+    )
+
+    estilo_observaciones = ParagraphStyle(
+        "Observaciones",
+        parent=estilos["Normal"],
+        fontSize=10,
+        leading=14
+    )
+
+    elementos = []
+
+    elementos.append(Paragraph("EduCampus · Colegio Manantial de Sabiduría (COLMAS)", estilos["Heading4"]))
+    elementos.append(Paragraph("Informe académico", estilo_titulo))
+    elementos.append(Spacer(1, 10))
+
+    info_estudiante = [
+        [
+            Paragraph(f"<b>ESTUDIANTE:</b> {estudiante.nombre.upper()}", estilos["Normal"]),
+            Paragraph(f"<b>PERIODO:</b> {periodo}", estilos["Normal"]),
+        ],
+        [
+            Paragraph(f"<b>GRADO:</b> {grado.nombre if grado else '-'}", estilos["Normal"]),
+            Paragraph(f"<b>FECHA:</b> {datetime.utcnow().strftime('%d/%m/%Y')}", estilos["Normal"]),
+        ],
+    ]
+
+    tabla_info = Table(info_estudiante, colWidths=[280, 200])
+    tabla_info.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+
+    elementos.append(tabla_info)
+    elementos.append(Spacer(1, 16))
+
+    for curso, calificacion in areas:
+
+        nombre_area = curso.title.upper()
+        desempeno = calcular_desempeno(calificacion.score)
+        nota = f"{calificacion.score:.1f}".replace(".", ",")
+
+        logros_html = "<br/>".join(
+            f"• {linea.strip()}"
+            for linea in (calificacion.logro or "Sin logros registrados").split("\n")
+            if linea.strip()
+        ) or "Sin logros registrados"
+
+        encabezado = Table(
+            [[Paragraph(nombre_area, estilo_area)]],
+            colWidths=[480]
+        )
+        encabezado.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#2c3e50")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+
+        cuerpo = Table(
+            [[
+                Paragraph(logros_html, estilo_logro),
+                Paragraph(desempeno, estilo_logro),
+                Paragraph(nota, estilo_logro),
+            ]],
+            colWidths=[340, 80, 60]
+        )
+        cuerpo.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+
+        elementos.append(encabezado)
+        elementos.append(cuerpo)
+        elementos.append(Spacer(1, 10))
+
+    elementos.append(Spacer(1, 10))
+    elementos.append(Paragraph("<b>OBSERVACIONES</b>", estilos["Heading4"]))
+    elementos.append(Paragraph(
+        observacion.texto if observacion else "Sin observaciones registradas.",
+        estilo_observaciones
+    ))
+
+    elementos.append(Spacer(1, 50))
+
+    firmas = [
+        [
+            Paragraph("_____________________________________", estilos["Normal"]),
+            Paragraph("_____________________________________", estilos["Normal"]),
+        ],
+        [
+            Paragraph("FIRMA DIRECTORA", estilos["Normal"]),
+            Paragraph("FIRMA PROFESOR (A)", estilos["Normal"]),
+        ],
+        [
+            Paragraph(DIRECTOR_NOMBRE, estilos["Normal"]),
+            Paragraph(docente_firma or "-", estilos["Normal"]),
+        ],
+    ]
+
+    tabla_firmas = Table(firmas, colWidths=[240, 240])
+    tabla_firmas.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ]))
+
+    elementos.append(tabla_firmas)
+
+    documento.build(elementos)
+
+    buffer.seek(0)
+
+    nombre_archivo = f"boletin_{estudiante.id}_{periodo}.pdf"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{nombre_archivo}"'
+        }
+    )
