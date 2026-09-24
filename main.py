@@ -1795,6 +1795,7 @@ def descargar_entrega(
 
 @app.post(
     "/horarios/",
+    response_model=schemas.HorarioResponse,
     status_code=status.HTTP_201_CREATED
 )
 def crear_horario(
@@ -1830,6 +1831,76 @@ def crear_horario(
     db.refresh(nuevo_horario)
 
     return nuevo_horario
+
+
+@app.get(
+    "/horarios/",
+    response_model=List[schemas.HorarioResponse]
+)
+def listar_horarios(
+    curso_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Horario)
+
+    if curso_id is not None:
+
+        query = query.filter(models.Horario.curso_id == curso_id)
+
+    return query.all()
+
+
+@app.delete(
+    "/horarios/{horario_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_horario(
+    horario_id: int,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Horario)
+        .filter(models.Horario.id == horario_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El horario no existe"
+        )
+
+    db.delete(existente)
+    db.commit()
+
+
+@app.delete(
+    "/cursos/{curso_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_curso(
+    curso_id: int,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Curso)
+        .filter(models.Curso.id == curso_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El curso no existe"
+        )
+
+    db.delete(existente)
+    db.commit()
 
 
 # ============================================================

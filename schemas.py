@@ -462,6 +462,14 @@ class HorarioCreate(BaseModel):
     hora_fin: time
 
 
+class HorarioResponse(HorarioCreate):
+    id: int
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 # ============================================================
 # COMUNICADOS
 # ============================================================
