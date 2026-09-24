@@ -30,6 +30,7 @@ class Administrador(Base):
     nombre = Column(String(150), nullable=False)
     correo = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    password_encrypted = Column(Text, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -75,6 +76,7 @@ class Acudiente(Base):
     nombre = Column(String(150), nullable=False)
     correo = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    password_encrypted = Column(Text, nullable=True)
     telefono = Column(String(30), nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -95,6 +97,7 @@ class Estudiante(Base):
     nombre = Column(String(150), nullable=False)
     correo = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    password_encrypted = Column(Text, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     grado_id = Column(
@@ -161,6 +164,7 @@ class Profesor(Base):
     nombre = Column(String(150), nullable=False)
     correo = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    password_encrypted = Column(Text, nullable=True)
     especialidad = Column(String(150), nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 

@@ -17,6 +17,7 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 
 import os
@@ -41,6 +42,14 @@ pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto"
 )
+
+# Cifrado reversible de la contraseña, solo para que el administrador pueda
+# consultarla si la olvida (decision explicita del cliente, con el riesgo
+# aceptado de que quedaria expuesta si la base de datos fuera comprometida).
+# El login sigue verificandose con el hash de un solo sentido de arriba;
+# esto es una copia aparte, nunca se usa para autenticar.
+_clave_cifrado = os.getenv("PASSWORD_ENCRYPTION_KEY")
+fernet = Fernet(_clave_cifrado.encode()) if _clave_cifrado else None
 
 
 # ============================================================
@@ -97,6 +106,21 @@ app.add_middleware(
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
+
+
+def cifrar_password(password: str) -> Optional[str]:
+    if not fernet:
+        return None
+    return fernet.encrypt(password.encode()).decode()
+
+
+def descifrar_password(password_encrypted: Optional[str]) -> Optional[str]:
+    if not fernet or not password_encrypted:
+        return None
+    try:
+        return fernet.decrypt(password_encrypted.encode()).decode()
+    except InvalidToken:
+        return None
 
 
 def verify_password(
@@ -269,6 +293,7 @@ def registrar_usuario(
 
     rol = usuario.rol.lower().strip()
     password_hash = hash_password(usuario.password)
+    password_encrypted = cifrar_password(usuario.password)
     nombre = usuario.nombre.strip()
 
     if rol == "administrador":
@@ -276,7 +301,8 @@ def registrar_usuario(
         nueva_cuenta = models.Administrador(
             nombre=nombre,
             correo=correo,
-            password_hash=password_hash
+            password_hash=password_hash,
+            password_encrypted=password_encrypted
         )
 
     elif rol in ("profesor", "docente"):
@@ -287,6 +313,7 @@ def registrar_usuario(
             nombre=nombre,
             correo=correo,
             password_hash=password_hash,
+            password_encrypted=password_encrypted,
             especialidad=usuario.especialidad
         )
 
@@ -296,6 +323,7 @@ def registrar_usuario(
             nombre=nombre,
             correo=correo,
             password_hash=password_hash,
+            password_encrypted=password_encrypted,
             telefono=usuario.telefono
         )
 
@@ -335,6 +363,7 @@ def registrar_usuario(
             nombre=nombre,
             correo=correo,
             password_hash=password_hash,
+            password_encrypted=password_encrypted,
             grado_id=usuario.grado_id,
             acudiente_id=usuario.acudiente_id
         )
@@ -397,6 +426,7 @@ def restablecer_password(
         )
 
     cuenta.password_hash = hash_password(solicitud.password)
+    cuenta.password_encrypted = cifrar_password(solicitud.password)
 
     db.commit()
 
@@ -404,6 +434,35 @@ def restablecer_password(
         "correo": cuenta.correo,
         "rol": rol,
         "message": "Contraseña restablecida correctamente"
+    }
+
+
+# ============================================================
+# AUTENTICACIÓN - CONSULTAR CONTRASEÑA (solo administrador)
+# ============================================================
+
+@app.get("/auth/consultar-password/")
+def consultar_password(
+    correo: str,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    correo = correo.lower().strip()
+
+    cuenta, rol = buscar_cuenta_por_correo(db, correo)
+
+    if not cuenta:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No existe ninguna cuenta con ese correo"
+        )
+
+    return {
+        "correo": cuenta.correo,
+        "rol": rol,
+        "password": descifrar_password(cuenta.password_encrypted)
     }
 
 
