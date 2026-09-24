@@ -496,6 +496,13 @@ class Convivencia(Base):
         nullable=False
     )
 
+    titulo = Column(
+        String(200),
+        nullable=False,
+        default="",
+        server_default=""
+    )
+
     observacion = Column(
         Text,
         nullable=False
@@ -511,6 +518,15 @@ class Convivencia(Base):
         default=date.today,
         nullable=False
     )
+
+    seguimiento_realizado = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false"
+    )
+
+    nota_seguimiento = Column(Text, nullable=True)
 
     estudiante = relationship(
         "Estudiante",
@@ -533,6 +549,13 @@ class AlertaAlumno(Base):
         nullable=False
     )
 
+    docente_nombre = Column(
+        String(150),
+        nullable=False,
+        default="",
+        server_default=""
+    )
+
     mensaje = Column(
         Text,
         nullable=False
@@ -542,6 +565,15 @@ class AlertaAlumno(Base):
         String(30),
         nullable=False
     )
+
+    atendida = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false"
+    )
+
+    respuesta_admin = Column(Text, nullable=True)
 
     fecha = Column(
         DateTime,

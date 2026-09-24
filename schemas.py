@@ -362,9 +362,24 @@ class AsistenciaDocenteResponse(BaseModel):
 
 class ConvivenciaCreate(BaseModel):
     student_id: int
+    titulo: str = ""
     observacion: str
     tipo: str
     fecha: Optional[date] = None
+
+
+class ConvivenciaResponse(ConvivenciaCreate):
+    id: int
+    seguimiento_realizado: bool
+    nota_seguimiento: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class SeguimientoConvivenciaRequest(BaseModel):
+    nota_seguimiento: Optional[str] = None
 
 
 # ============================================================
@@ -373,8 +388,24 @@ class ConvivenciaCreate(BaseModel):
 
 class AlertaCreate(BaseModel):
     student_id: int
+    docente_nombre: str = ""
     mensaje: str
     severidad: str
+
+
+class AlertaResponse(AlertaCreate):
+    id: int
+    atendida: bool
+    respuesta_admin: Optional[str] = None
+    fecha: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class AtenderAlertaRequest(BaseModel):
+    respuesta_admin: Optional[str] = None
 
 
 # ============================================================

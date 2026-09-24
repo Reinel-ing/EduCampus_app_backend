@@ -1331,6 +1331,7 @@ def listar_asistencia_docentes(
 
 @app.post(
     "/convivencia/",
+    response_model=schemas.ConvivenciaResponse,
     status_code=status.HTTP_201_CREATED
 )
 def registrar_convivencia(
@@ -1356,6 +1357,7 @@ def registrar_convivencia(
 
     nuevo_registro = models.Convivencia(
         student_id=conv.student_id,
+        titulo=conv.titulo,
         observacion=conv.observacion,
         tipo=conv.tipo,
         fecha=conv.fecha or datetime.utcnow().date()
@@ -1368,12 +1370,91 @@ def registrar_convivencia(
     return nuevo_registro
 
 
+@app.get(
+    "/convivencia/",
+    response_model=List[schemas.ConvivenciaResponse]
+)
+def listar_convivencia(
+    student_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Convivencia)
+
+    if student_id is not None:
+
+        query = query.filter(models.Convivencia.student_id == student_id)
+
+    return query.order_by(models.Convivencia.fecha.desc()).all()
+
+
+@app.put(
+    "/convivencia/{convivencia_id}/seguimiento",
+    response_model=schemas.ConvivenciaResponse
+)
+def actualizar_seguimiento_convivencia(
+    convivencia_id: int,
+    datos: schemas.SeguimientoConvivenciaRequest,
+    db: Session = Depends(get_db)
+):
+
+    registro = (
+        db.query(models.Convivencia)
+        .filter(models.Convivencia.id == convivencia_id)
+        .first()
+    )
+
+    if not registro:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El registro no existe"
+        )
+
+    registro.seguimiento_realizado = True
+
+    if datos.nota_seguimiento is not None:
+        registro.nota_seguimiento = datos.nota_seguimiento
+
+    db.commit()
+    db.refresh(registro)
+
+    return registro
+
+
+@app.delete(
+    "/convivencia/{convivencia_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_convivencia(
+    convivencia_id: int,
+    db: Session = Depends(get_db)
+):
+
+    registro = (
+        db.query(models.Convivencia)
+        .filter(models.Convivencia.id == convivencia_id)
+        .first()
+    )
+
+    if not registro:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El registro no existe"
+        )
+
+    db.delete(registro)
+    db.commit()
+
+
 # ============================================================
 # ALERTAS
 # ============================================================
 
 @app.post(
     "/alertas/",
+    response_model=schemas.AlertaResponse,
     status_code=status.HTTP_201_CREATED
 )
 def registrar_alerta(
@@ -1399,6 +1480,7 @@ def registrar_alerta(
 
     nueva_alerta = models.AlertaAlumno(
         student_id=alerta.student_id,
+        docente_nombre=alerta.docente_nombre,
         mensaje=alerta.mensaje,
         severidad=alerta.severidad
     )
@@ -1421,6 +1503,58 @@ def registrar_alerta(
     db.refresh(nueva_alerta)
 
     return nueva_alerta
+
+
+@app.get(
+    "/alertas/",
+    response_model=List[schemas.AlertaResponse]
+)
+def listar_alertas(
+    student_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.AlertaAlumno)
+
+    if student_id is not None:
+
+        query = query.filter(models.AlertaAlumno.student_id == student_id)
+
+    return query.order_by(models.AlertaAlumno.fecha.desc()).all()
+
+
+@app.put(
+    "/alertas/{alerta_id}/atender",
+    response_model=schemas.AlertaResponse
+)
+def atender_alerta(
+    alerta_id: int,
+    datos: schemas.AtenderAlertaRequest,
+    db: Session = Depends(get_db)
+):
+
+    alerta = (
+        db.query(models.AlertaAlumno)
+        .filter(models.AlertaAlumno.id == alerta_id)
+        .first()
+    )
+
+    if not alerta:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La alerta no existe"
+        )
+
+    alerta.atendida = True
+
+    if datos.respuesta_admin is not None:
+        alerta.respuesta_admin = datos.respuesta_admin
+
+    db.commit()
+    db.refresh(alerta)
+
+    return alerta
 
 
 # ============================================================
