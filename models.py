@@ -433,6 +433,53 @@ class Asistencia(Base):
         back_populates="asistencias"
     )
 
+    __table_args__ = (
+        UniqueConstraint(
+            "student_id",
+            "course_id",
+            "fecha",
+            name="uq_asistencia_estudiante_curso_fecha"
+        ),
+    )
+
+
+# ============================================================
+# ASISTENCIA DE DOCENTES
+# ============================================================
+
+class AsistenciaDocente(Base):
+    __tablename__ = "asistencias_docentes"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    profesor_id = Column(
+        Integer,
+        ForeignKey("profesores.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    fecha = Column(
+        Date,
+        default=date.today,
+        nullable=False
+    )
+
+    presente = Column(Boolean, default=True, nullable=False)
+
+    completo = Column(Boolean, default=True, nullable=False)
+
+    observacion = Column(Text, nullable=True)
+
+    profesor = relationship("Profesor")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "profesor_id",
+            "fecha",
+            name="uq_asistencia_docente_fecha"
+        ),
+    )
+
 
 # ============================================================
 # CONVIVENCIA

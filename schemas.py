@@ -311,6 +311,43 @@ class AsistenciaCreate(BaseModel):
     fecha: Optional[date] = None
 
 
+class AsistenciaResponse(BaseModel):
+    id: int
+    student_id: int
+    course_id: int
+    status: str
+    fecha: date
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+# ============================================================
+# ASISTENCIA DE DOCENTES
+# ============================================================
+
+class AsistenciaDocenteCreate(BaseModel):
+    profesor_id: int
+    fecha: Optional[date] = None
+    presente: bool = True
+    completo: bool = True
+    observacion: Optional[str] = None
+
+
+class AsistenciaDocenteResponse(BaseModel):
+    id: int
+    profesor_id: int
+    fecha: date
+    presente: bool
+    completo: bool
+    observacion: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 # ============================================================
 # CONVIVENCIA
 # ============================================================

@@ -1073,11 +1073,32 @@ def registrar_asistencia(
             detail="El curso no existe"
         )
 
+    fecha = asis.fecha or datetime.utcnow().date()
+
+    existente = (
+        db.query(models.Asistencia)
+        .filter(
+            models.Asistencia.student_id == asis.student_id,
+            models.Asistencia.course_id == asis.course_id,
+            models.Asistencia.fecha == fecha
+        )
+        .first()
+    )
+
+    if existente:
+
+        existente.status = asis.status
+
+        db.commit()
+        db.refresh(existente)
+
+        return existente
+
     nueva_asistencia = models.Asistencia(
         student_id=asis.student_id,
         course_id=asis.course_id,
         status=asis.status,
-        fecha=asis.fecha or datetime.utcnow().date()
+        fecha=fecha
     )
 
     db.add(nueva_asistencia)
@@ -1085,6 +1106,108 @@ def registrar_asistencia(
     db.refresh(nueva_asistencia)
 
     return nueva_asistencia
+
+
+@app.get(
+    "/asistencias/",
+    response_model=List[schemas.AsistenciaResponse]
+)
+def listar_asistencias(
+    course_id: int | None = None,
+    fecha: date | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Asistencia)
+
+    if course_id is not None:
+        query = query.filter(models.Asistencia.course_id == course_id)
+
+    if fecha is not None:
+        query = query.filter(models.Asistencia.fecha == fecha)
+
+    return query.all()
+
+
+# ============================================================
+# ASISTENCIA DE DOCENTES
+# ============================================================
+
+@app.post(
+    "/asistencia-docentes/",
+    response_model=schemas.AsistenciaDocenteResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def registrar_asistencia_docente(
+    asis: schemas.AsistenciaDocenteCreate,
+    db: Session = Depends(get_db)
+):
+
+    profesor = (
+        db.query(models.Profesor)
+        .filter(models.Profesor.id == asis.profesor_id)
+        .first()
+    )
+
+    if not profesor:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El docente no existe"
+        )
+
+    fecha = asis.fecha or datetime.utcnow().date()
+
+    existente = (
+        db.query(models.AsistenciaDocente)
+        .filter(
+            models.AsistenciaDocente.profesor_id == asis.profesor_id,
+            models.AsistenciaDocente.fecha == fecha
+        )
+        .first()
+    )
+
+    if existente:
+
+        existente.presente = asis.presente
+        existente.completo = asis.completo
+        existente.observacion = asis.observacion
+
+        db.commit()
+        db.refresh(existente)
+
+        return existente
+
+    nueva = models.AsistenciaDocente(
+        profesor_id=asis.profesor_id,
+        fecha=fecha,
+        presente=asis.presente,
+        completo=asis.completo,
+        observacion=asis.observacion
+    )
+
+    db.add(nueva)
+    db.commit()
+    db.refresh(nueva)
+
+    return nueva
+
+
+@app.get(
+    "/asistencia-docentes/",
+    response_model=List[schemas.AsistenciaDocenteResponse]
+)
+def listar_asistencia_docentes(
+    fecha: date | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.AsistenciaDocente)
+
+    if fecha is not None:
+        query = query.filter(models.AsistenciaDocente.fecha == fecha)
+
+    return query.all()
 
 
 # ============================================================
@@ -1992,6 +2115,177 @@ def descargar_boletin(
     buffer.seek(0)
 
     nombre_archivo = f"boletin_{estudiante.id}_{periodo}.pdf"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{nombre_archivo}"'
+        }
+    )
+
+
+# ============================================================
+# REPORTE DIARIO DE ASISTENCIA (PDF)
+# ============================================================
+
+@app.get("/reportes/asistencia-diaria/")
+def reporte_asistencia_diaria(
+    fecha: date | None = None,
+    db: Session = Depends(get_db)
+):
+
+    fecha_reporte = fecha or datetime.utcnow().date()
+
+    profesores = (
+        db.query(models.Profesor)
+        .order_by(models.Profesor.nombre)
+        .all()
+    )
+
+    asistencias_docentes = {
+        a.profesor_id: a
+        for a in db.query(models.AsistenciaDocente)
+        .filter(models.AsistenciaDocente.fecha == fecha_reporte)
+        .all()
+    }
+
+    buffer = io.BytesIO()
+
+    documento = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        title=f"Reporte de asistencia - {fecha_reporte}",
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    estilos = getSampleStyleSheet()
+    elementos = []
+
+    elementos.append(Paragraph("EduCampus · Colegio Manantial de Sabiduría (COLMAS)", estilos["Heading4"]))
+    elementos.append(Paragraph(f"Reporte diario de asistencia — {fecha_reporte.strftime('%d/%m/%Y')}", estilos["Title"]))
+    elementos.append(Spacer(1, 16))
+
+    if not profesores:
+        elementos.append(Paragraph("No hay docentes registrados.", estilos["Normal"]))
+
+    for profesor in profesores:
+
+        asistencia_docente = asistencias_docentes.get(profesor.id)
+
+        if asistencia_docente is None:
+            estado_docente = "Sin registrar"
+            color_estado = colors.grey
+        elif not asistencia_docente.presente:
+            estado_docente = "Ausente"
+            color_estado = colors.HexColor("#C0392B")
+        elif not asistencia_docente.completo:
+            estado_docente = "Presente (incompleto)"
+            color_estado = colors.HexColor("#E67E22")
+        else:
+            estado_docente = "Presente (completo)"
+            color_estado = colors.HexColor("#27AE60")
+
+        estilo_docente = ParagraphStyle(
+            "DocenteNombre",
+            parent=estilos["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=11
+        )
+
+        estilo_estado = ParagraphStyle(
+            "DocenteEstado",
+            parent=estilos["Normal"],
+            fontSize=10,
+            textColor=color_estado,
+            fontName="Helvetica-Bold"
+        )
+
+        encabezado_docente = Table(
+            [[
+                Paragraph(profesor.nombre, estilo_docente),
+                Paragraph(estado_docente, estilo_estado),
+            ]],
+            colWidths=[340, 140]
+        )
+        encabezado_docente.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F3F4F7")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ]))
+
+        elementos.append(encabezado_docente)
+
+        if asistencia_docente and asistencia_docente.observacion:
+            elementos.append(Paragraph(
+                f"Observación: {asistencia_docente.observacion}",
+                ParagraphStyle("Obs", parent=estilos["Normal"], fontSize=9, textColor=colors.grey)
+            ))
+
+        cursos = (
+            db.query(models.Curso)
+            .filter(models.Curso.instructor_id == profesor.id)
+            .all()
+        )
+
+        if not cursos:
+
+            elementos.append(Paragraph(
+                "Sin cursos asignados.",
+                ParagraphStyle("SinCursos", parent=estilos["Normal"], fontSize=9, textColor=colors.grey)
+            ))
+
+        else:
+
+            filas = [["Curso", "Presentes", "Ausentes", "Tarde", "Excusa"]]
+
+            for curso in cursos:
+
+                registros = (
+                    db.query(models.Asistencia)
+                    .filter(
+                        models.Asistencia.course_id == curso.id,
+                        models.Asistencia.fecha == fecha_reporte
+                    )
+                    .all()
+                )
+
+                presentes = sum(1 for r in registros if r.status == "presente")
+                ausentes = sum(1 for r in registros if r.status == "ausente")
+                tarde = sum(1 for r in registros if r.status == "tarde")
+                excusa = sum(1 for r in registros if r.status == "excusa")
+
+                filas.append([
+                    curso.title,
+                    str(presentes),
+                    str(ausentes),
+                    str(tarde),
+                    str(excusa),
+                ])
+
+            tabla_cursos = Table(filas, colWidths=[220, 65, 65, 65, 65])
+            tabla_cursos.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7E7EC")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+
+            elementos.append(tabla_cursos)
+
+        elementos.append(Spacer(1, 14))
+
+    documento.build(elementos)
+
+    buffer.seek(0)
+
+    nombre_archivo = f"asistencia_diaria_{fecha_reporte}.pdf"
 
     return StreamingResponse(
         buffer,
