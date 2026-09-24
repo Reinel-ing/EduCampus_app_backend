@@ -772,6 +772,7 @@ def crear_curso(
 @app.get("/cursos/")
 def listar_cursos(
     instructor_id: int | None = None,
+    student_id: int | None = None,
     db: Session = Depends(get_db)
 ):
 
@@ -780,6 +781,16 @@ def listar_cursos(
     if instructor_id is not None:
 
         query = query.filter(models.Curso.instructor_id == instructor_id)
+
+    if student_id is not None:
+
+        query = (
+            query.join(
+                models.Matricula,
+                models.Matricula.course_id == models.Curso.id
+            )
+            .filter(models.Matricula.student_id == student_id)
+        )
 
     return query.all()
 
@@ -1132,6 +1143,7 @@ def registrar_asistencia(
 )
 def listar_asistencias(
     course_id: int | None = None,
+    student_id: int | None = None,
     fecha: date | None = None,
     db: Session = Depends(get_db)
 ):
@@ -1141,10 +1153,13 @@ def listar_asistencias(
     if course_id is not None:
         query = query.filter(models.Asistencia.course_id == course_id)
 
+    if student_id is not None:
+        query = query.filter(models.Asistencia.student_id == student_id)
+
     if fecha is not None:
         query = query.filter(models.Asistencia.fecha == fecha)
 
-    return query.all()
+    return query.order_by(models.Asistencia.fecha.desc()).all()
 
 
 # ============================================================
@@ -1453,6 +1468,7 @@ def marcar_notificacion_leida(
 
 @app.post(
     "/materiales/",
+    response_model=schemas.MaterialResponse,
     status_code=status.HTTP_201_CREATED
 )
 def subir_material(
@@ -1478,8 +1494,12 @@ def subir_material(
 
     nuevo_material = models.MaterialDidactico(
         curso_id=mat.curso_id,
-        titulo=mat.titulo,
-        archivo_url=mat.archivo_url
+        titulo=mat.titulo.strip(),
+        descripcion=mat.descripcion.strip(),
+        materia=mat.materia.strip(),
+        enlace=mat.enlace.strip(),
+        archivo_nombre=mat.archivo_nombre,
+        archivo_base64=mat.archivo_base64,
     )
 
     db.add(nuevo_material)
@@ -1487,6 +1507,50 @@ def subir_material(
     db.refresh(nuevo_material)
 
     return nuevo_material
+
+
+@app.get(
+    "/materiales/",
+    response_model=List[schemas.MaterialResponse]
+)
+def listar_materiales(
+    curso_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.MaterialDidactico)
+
+    if curso_id is not None:
+
+        query = query.filter(models.MaterialDidactico.curso_id == curso_id)
+
+    return query.order_by(models.MaterialDidactico.fecha_creacion.desc()).all()
+
+
+@app.delete(
+    "/materiales/{material_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_material(
+    material_id: int,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.MaterialDidactico)
+        .filter(models.MaterialDidactico.id == material_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El material no existe"
+        )
+
+    db.delete(existente)
+    db.commit()
 
 
 # ============================================================

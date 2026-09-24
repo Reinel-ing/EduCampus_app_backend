@@ -614,6 +614,12 @@ class MaterialDidactico(Base):
         nullable=False
     )
 
+    descripcion = Column(Text, nullable=False, default="")
+    materia = Column(String(150), nullable=False, default="")
+    enlace = Column(String(500), nullable=False, default="")
+    archivo_nombre = Column(String(255), nullable=True)
+    archivo_base64 = Column(Text, nullable=True)
+
     archivo_url = Column(
         Text,
         nullable=True

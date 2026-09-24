@@ -403,8 +403,21 @@ class AvisoRecogidaResponse(BaseModel):
 
 class MaterialCreate(BaseModel):
     curso_id: int
-    titulo: str
-    archivo_url: Optional[str] = None
+    titulo: str = Field(min_length=1, max_length=200)
+    descripcion: str = ""
+    materia: str = ""
+    enlace: str = ""
+    archivo_nombre: Optional[str] = None
+    archivo_base64: Optional[str] = None
+
+
+class MaterialResponse(MaterialCreate):
+    id: int
+    fecha_creacion: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
 
 
 # ============================================================
