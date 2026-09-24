@@ -814,3 +814,25 @@ class Comunicado(Base):
         default=datetime.utcnow,
         nullable=False
     )
+
+
+# ============================================================
+# EVENTOS DE CALENDARIO
+# ============================================================
+
+class EventoCalendario(Base):
+    __tablename__ = "eventos_calendario"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    titulo = Column(String(200), nullable=False)
+    descripcion = Column(Text, nullable=False, default="")
+    fecha = Column(Date, nullable=False)
+
+    creado_por_id = Column(
+        Integer,
+        ForeignKey("administradores.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)

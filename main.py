@@ -2312,3 +2312,75 @@ def reporte_asistencia_diaria(
             "Content-Disposition": f'attachment; filename="{nombre_archivo}"'
         }
     )
+
+
+# ============================================================
+# EVENTOS DE CALENDARIO
+# ============================================================
+
+@app.post(
+    "/eventos-calendario/",
+    response_model=schemas.EventoCalendarioResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def crear_evento_calendario(
+    evento: schemas.EventoCalendarioCreate,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(requerir_admin)
+):
+
+    nuevo_evento = models.EventoCalendario(
+        titulo=evento.titulo.strip(),
+        descripcion=evento.descripcion.strip(),
+        fecha=evento.fecha,
+        creado_por_id=admin["usuario_id"]
+    )
+
+    db.add(nuevo_evento)
+    db.commit()
+    db.refresh(nuevo_evento)
+
+    return nuevo_evento
+
+
+@app.get(
+    "/eventos-calendario/",
+    response_model=List[schemas.EventoCalendarioResponse]
+)
+def listar_eventos_calendario(
+    db: Session = Depends(get_db),
+    _sesion: dict = Depends(requerir_sesion)
+):
+
+    return (
+        db.query(models.EventoCalendario)
+        .order_by(models.EventoCalendario.fecha)
+        .all()
+    )
+
+
+@app.delete(
+    "/eventos-calendario/{evento_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_evento_calendario(
+    evento_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    existente = (
+        db.query(models.EventoCalendario)
+        .filter(models.EventoCalendario.id == evento_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El evento no existe"
+        )
+
+    db.delete(existente)
+    db.commit()

@@ -459,3 +459,21 @@ class ComunicadoCreate(BaseModel):
     mensaje: str
     destinatario_rol: str
     fecha: Optional[datetime] = None
+
+
+# ============================================================
+# EVENTOS DE CALENDARIO
+# ============================================================
+
+class EventoCalendarioCreate(BaseModel):
+    titulo: str = Field(min_length=1, max_length=200)
+    descripcion: str = ""
+    fecha: date
+
+
+class EventoCalendarioResponse(EventoCalendarioCreate):
+    id: int
+
+    model_config = {
+        "from_attributes": True
+    }
