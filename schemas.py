@@ -392,9 +392,15 @@ class AvisoRecogidaRequest(BaseModel):
     course_id: int
 
 
+class AvisoWhatsapp(BaseModel):
+    telefono: str
+    mensaje: str
+
+
 class AvisoRecogidaResponse(BaseModel):
     acudientes_notificados: int
     curso: str
+    whatsapp: list[AvisoWhatsapp] = []
 
 
 # ============================================================

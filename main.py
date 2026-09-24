@@ -1389,6 +1389,7 @@ def avisar_recogida(
     )
 
     notificados = 0
+    avisos_whatsapp = []
 
     for matricula in matriculas:
 
@@ -1397,25 +1398,41 @@ def avisar_recogida(
         if not estudiante or estudiante.acudiente_id is None:
             continue
 
+        mensaje = (
+            f"La clase de {curso.title} ha finalizado. "
+            f"Ya puede pasar a recoger a {estudiante.nombre} en el colegio."
+        )
+
         notificacion = models.Notificacion(
             acudiente_id=estudiante.acudiente_id,
             estudiante_id=estudiante.id,
             titulo="Ya puede recoger a su hijo(a)",
-            mensaje=(
-                f"La clase de {curso.title} ha finalizado. "
-                f"Ya puede pasar a recoger a {estudiante.nombre} en el colegio."
-            ),
+            mensaje=mensaje,
             tipo="recogida"
         )
 
         db.add(notificacion)
         notificados += 1
 
+        acudiente = (
+            db.query(models.Acudiente)
+            .filter(models.Acudiente.id == estudiante.acudiente_id)
+            .first()
+        )
+
+        if acudiente and acudiente.telefono:
+
+            avisos_whatsapp.append({
+                "telefono": acudiente.telefono,
+                "mensaje": mensaje
+            })
+
     db.commit()
 
     return {
         "acudientes_notificados": notificados,
-        "curso": curso.title
+        "curso": curso.title,
+        "whatsapp": avisos_whatsapp
     }
 
 
