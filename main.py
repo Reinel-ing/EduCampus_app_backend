@@ -859,6 +859,24 @@ def crear_matricula(
     return nueva_matricula
 
 
+@app.get(
+    "/cursos/{curso_id}/estudiantes/",
+    response_model=List[schemas.EstudianteResponse]
+)
+def listar_estudiantes_del_curso(
+    curso_id: int,
+    db: Session = Depends(get_db)
+):
+
+    matriculas = (
+        db.query(models.Matricula)
+        .filter(models.Matricula.course_id == curso_id)
+        .all()
+    )
+
+    return [m.estudiante for m in matriculas if m.estudiante is not None]
+
+
 # ============================================================
 # CALIFICACIONES
 # ============================================================
