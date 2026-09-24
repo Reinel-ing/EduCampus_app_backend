@@ -528,3 +528,16 @@ class EventoCalendarioResponse(EventoCalendarioCreate):
     model_config = {
         "from_attributes": True
     }
+
+
+# ============================================================
+# CLASES FINALIZADAS
+# ============================================================
+
+class ClaseFinalizadaResponse(BaseModel):
+    id: int
+    docente_nombre: str
+    materia: str
+    grado: str
+    observacion: str
+    fecha_hora: datetime

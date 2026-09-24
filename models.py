@@ -845,3 +845,24 @@ class EventoCalendario(Base):
     )
 
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ============================================================
+# CLASES FINALIZADAS (registro de "Ya pueden recoger")
+# ============================================================
+
+class ClaseFinalizada(Base):
+    __tablename__ = "clases_finalizadas"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    curso_id = Column(
+        Integer,
+        ForeignKey("cursos.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    observacion = Column(Text, nullable=False, default="")
+    fecha_hora = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    curso = relationship("Curso")

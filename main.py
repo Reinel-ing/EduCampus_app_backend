@@ -1509,6 +1509,8 @@ def avisar_recogida(
                 "mensaje": mensaje
             })
 
+    db.add(models.ClaseFinalizada(curso_id=curso.id))
+
     db.commit()
 
     return {
@@ -2683,3 +2685,41 @@ def eliminar_evento_calendario(
 
     db.delete(existente)
     db.commit()
+
+
+# ============================================================
+# CLASES FINALIZADAS
+# ============================================================
+
+@app.get(
+    "/clases-finalizadas/",
+    response_model=List[schemas.ClaseFinalizadaResponse]
+)
+def listar_clases_finalizadas(
+    db: Session = Depends(get_db)
+):
+
+    registros = (
+        db.query(models.ClaseFinalizada)
+        .order_by(models.ClaseFinalizada.fecha_hora.desc())
+        .all()
+    )
+
+    resultado = []
+
+    for r in registros:
+
+        curso = r.curso
+        profesor = curso.profesor if curso else None
+        grado = curso.grado if curso else None
+
+        resultado.append({
+            "id": r.id,
+            "docente_nombre": profesor.nombre if profesor else "Docente",
+            "materia": curso.title if curso else "Curso",
+            "grado": grado.nombre if grado else "",
+            "observacion": r.observacion,
+            "fecha_hora": r.fecha_hora,
+        })
+
+    return resultado
