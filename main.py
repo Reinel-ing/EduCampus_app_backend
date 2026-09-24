@@ -1,5 +1,5 @@
 ﻿
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import List, Optional
 import io
@@ -59,6 +59,12 @@ sesiones = {}
 
 UPLOAD_DIR = Path(__file__).parent / "uploads" / "entregas"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# El docente elige la fecha/hora limite de una actividad en su hora local
+# (Colombia, UTC-5, sin horario de verano) y se guarda tal cual, sin
+# convertir a UTC. Para comparar contra "ahora" hay que restarle el mismo
+# desfase a la hora del servidor (que corre en UTC).
+COLOMBIA_UTC_OFFSET = timedelta(hours=-5)
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 DOCUMENTO_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".txt"}
@@ -1930,7 +1936,7 @@ async def subir_entrega(
             detail="La actividad no existe"
         )
 
-    if datetime.utcnow() > tarea.fecha_entrega:
+    if datetime.utcnow() + COLOMBIA_UTC_OFFSET > tarea.fecha_entrega:
 
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
