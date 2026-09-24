@@ -1104,6 +1104,13 @@ def registrar_asistencia(
 
     fecha = asis.fecha or datetime.utcnow().date()
 
+    if fecha > datetime.utcnow().date():
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede registrar asistencia de una fecha futura"
+        )
+
     existente = (
         db.query(models.Asistencia)
         .filter(
@@ -1190,6 +1197,13 @@ def registrar_asistencia_docente(
         )
 
     fecha = asis.fecha or datetime.utcnow().date()
+
+    if fecha > datetime.utcnow().date():
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede registrar asistencia de una fecha futura"
+        )
 
     existente = (
         db.query(models.AsistenciaDocente)
