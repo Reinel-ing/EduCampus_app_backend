@@ -2149,23 +2149,72 @@ def descargar_boletin(
 
 @app.get("/reportes/asistencia-diaria/")
 def reporte_asistencia_diaria(
+    curso_id: int,
     fecha: date | None = None,
     db: Session = Depends(get_db)
 ):
 
     fecha_reporte = fecha or datetime.utcnow().date()
 
-    profesores = (
+    curso = (
+        db.query(models.Curso)
+        .filter(models.Curso.id == curso_id)
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El curso no existe"
+        )
+
+    profesor = (
         db.query(models.Profesor)
-        .order_by(models.Profesor.nombre)
+        .filter(models.Profesor.id == curso.instructor_id)
+        .first()
+        if curso.instructor_id else None
+    )
+
+    asistencia_docente = None
+
+    if profesor:
+
+        asistencia_docente = (
+            db.query(models.AsistenciaDocente)
+            .filter(
+                models.AsistenciaDocente.profesor_id == profesor.id,
+                models.AsistenciaDocente.fecha == fecha_reporte
+            )
+            .first()
+        )
+
+    matriculas = (
+        db.query(models.Matricula)
+        .filter(models.Matricula.course_id == curso_id)
         .all()
     )
 
-    asistencias_docentes = {
-        a.profesor_id: a
-        for a in db.query(models.AsistenciaDocente)
-        .filter(models.AsistenciaDocente.fecha == fecha_reporte)
+    estudiantes = sorted(
+        (m.estudiante for m in matriculas if m.estudiante is not None),
+        key=lambda e: e.nombre
+    )
+
+    registros = {
+        r.student_id: r
+        for r in db.query(models.Asistencia)
+        .filter(
+            models.Asistencia.course_id == curso_id,
+            models.Asistencia.fecha == fecha_reporte
+        )
         .all()
+    }
+
+    ESTADOS = {
+        "presente": "Presente",
+        "ausente": "Ausente",
+        "tarde": "Tarde",
+        "excusa": "Excusa",
     }
 
     buffer = io.BytesIO()
@@ -2173,7 +2222,7 @@ def reporte_asistencia_diaria(
     documento = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        title=f"Reporte de asistencia - {fecha_reporte}",
+        title=f"Reporte de asistencia - {curso.title} - {fecha_reporte}",
         topMargin=36,
         bottomMargin=36
     )
@@ -2182,15 +2231,10 @@ def reporte_asistencia_diaria(
     elementos = []
 
     elementos.append(Paragraph("EduCampus · Colegio Manantial de Sabiduría (COLMAS)", estilos["Heading4"]))
-    elementos.append(Paragraph(f"Reporte diario de asistencia — {fecha_reporte.strftime('%d/%m/%Y')}", estilos["Title"]))
-    elementos.append(Spacer(1, 16))
+    elementos.append(Paragraph(f"Asistencia — {curso.title} — {fecha_reporte.strftime('%d/%m/%Y')}", estilos["Title"]))
+    elementos.append(Spacer(1, 10))
 
-    if not profesores:
-        elementos.append(Paragraph("No hay docentes registrados.", estilos["Normal"]))
-
-    for profesor in profesores:
-
-        asistencia_docente = asistencias_docentes.get(profesor.id)
+    if profesor:
 
         if asistencia_docente is None:
             estado_docente = "Sin registrar"
@@ -2222,7 +2266,7 @@ def reporte_asistencia_diaria(
 
         encabezado_docente = Table(
             [[
-                Paragraph(profesor.nombre, estilo_docente),
+                Paragraph(f"Docente: {profesor.nombre}", estilo_docente),
                 Paragraph(estado_docente, estilo_estado),
             ]],
             colWidths=[340, 140]
@@ -2236,74 +2280,44 @@ def reporte_asistencia_diaria(
         ]))
 
         elementos.append(encabezado_docente)
+        elementos.append(Spacer(1, 16))
 
-        if asistencia_docente and asistencia_docente.observacion:
-            elementos.append(Paragraph(
-                f"Observación: {asistencia_docente.observacion}",
-                ParagraphStyle("Obs", parent=estilos["Normal"], fontSize=9, textColor=colors.grey)
-            ))
+    if not estudiantes:
 
-        cursos = (
-            db.query(models.Curso)
-            .filter(models.Curso.instructor_id == profesor.id)
-            .all()
-        )
+        elementos.append(Paragraph(
+            "No hay estudiantes matriculados en este curso.",
+            estilos["Normal"]
+        ))
 
-        if not cursos:
+    else:
 
-            elementos.append(Paragraph(
-                "Sin cursos asignados.",
-                ParagraphStyle("SinCursos", parent=estilos["Normal"], fontSize=9, textColor=colors.grey)
-            ))
+        filas = [["Estudiante", "Estado"]]
 
-        else:
+        for estudiante in estudiantes:
 
-            filas = [["Curso", "Presentes", "Ausentes", "Tarde", "Excusa"]]
+            registro = registros.get(estudiante.id)
+            estado = ESTADOS.get(registro.status, "Sin registrar") if registro else "Sin registrar"
 
-            for curso in cursos:
+            filas.append([estudiante.nombre, estado])
 
-                registros = (
-                    db.query(models.Asistencia)
-                    .filter(
-                        models.Asistencia.course_id == curso.id,
-                        models.Asistencia.fecha == fecha_reporte
-                    )
-                    .all()
-                )
+        tabla_estudiantes = Table(filas, colWidths=[340, 140])
+        tabla_estudiantes.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7E7EC")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
 
-                presentes = sum(1 for r in registros if r.status == "presente")
-                ausentes = sum(1 for r in registros if r.status == "ausente")
-                tarde = sum(1 for r in registros if r.status == "tarde")
-                excusa = sum(1 for r in registros if r.status == "excusa")
-
-                filas.append([
-                    curso.title,
-                    str(presentes),
-                    str(ausentes),
-                    str(tarde),
-                    str(excusa),
-                ])
-
-            tabla_cursos = Table(filas, colWidths=[220, 65, 65, 65, 65])
-            tabla_cursos.setStyle(TableStyle([
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7E7EC")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]))
-
-            elementos.append(tabla_cursos)
-
-        elementos.append(Spacer(1, 14))
+        elementos.append(tabla_estudiantes)
 
     documento.build(elementos)
 
     buffer.seek(0)
 
-    nombre_archivo = f"asistencia_diaria_{fecha_reporte}.pdf"
+    nombre_archivo = f"asistencia_{curso.title.replace(' ', '_')}_{fecha_reporte}.pdf"
 
     return StreamingResponse(
         buffer,
