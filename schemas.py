@@ -414,7 +414,8 @@ class AtenderAlertaRequest(BaseModel):
 
 class NotificacionResponse(BaseModel):
     id: int
-    acudiente_id: int
+    acudiente_id: Optional[int] = None
+    profesor_id: Optional[int] = None
     estudiante_id: Optional[int] = None
     titulo: str
     mensaje: str

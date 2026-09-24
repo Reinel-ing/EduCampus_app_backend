@@ -1671,6 +1671,23 @@ def listar_notificaciones(
     )
 
 
+@app.get(
+    "/notificaciones/docente/{profesor_id}/",
+    response_model=List[schemas.NotificacionResponse]
+)
+def listar_notificaciones_docente(
+    profesor_id: int,
+    db: Session = Depends(get_db)
+):
+
+    return (
+        db.query(models.Notificacion)
+        .filter(models.Notificacion.profesor_id == profesor_id)
+        .order_by(models.Notificacion.fecha.desc())
+        .all()
+    )
+
+
 @app.post("/notificaciones/{notificacion_id}/marcar-leida/")
 def marcar_notificacion_leida(
     notificacion_id: int,
@@ -1989,6 +2006,25 @@ async def subir_entrega(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ya existe una entrega de este estudiante para esta actividad"
         )
+
+    curso = (
+        db.query(models.Curso)
+        .filter(models.Curso.id == tarea.curso_id)
+        .first()
+    )
+
+    if curso and curso.instructor_id:
+
+        notificacion = models.Notificacion(
+            profesor_id=curso.instructor_id,
+            estudiante_id=student_id,
+            titulo="Nueva entrega",
+            mensaje=f"{estudiante.nombre} entregó la actividad \"{tarea.titulo}\".",
+            tipo="entrega"
+        )
+
+        db.add(notificacion)
+        db.commit()
 
     return nueva_entrega
 

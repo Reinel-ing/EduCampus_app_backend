@@ -599,7 +599,13 @@ class Notificacion(Base):
     acudiente_id = Column(
         Integer,
         ForeignKey("acudientes.id", ondelete="CASCADE"),
-        nullable=False
+        nullable=True
+    )
+
+    profesor_id = Column(
+        Integer,
+        ForeignKey("profesores.id", ondelete="CASCADE"),
+        nullable=True
     )
 
     estudiante_id = Column(
