@@ -61,7 +61,7 @@ UPLOAD_DIR = Path(__file__).parent / "uploads" / "entregas"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-DOCUMENTO_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".txt"}
+DOCUMENTO_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".txt"}
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
@@ -1559,6 +1559,7 @@ def eliminar_material(
 
 @app.post(
     "/tareas/",
+    response_model=schemas.TareaResponse,
     status_code=status.HTTP_201_CREATED
 )
 def crear_tarea(
@@ -1595,6 +1596,24 @@ def crear_tarea(
     db.refresh(nueva_tarea)
 
     return nueva_tarea
+
+
+@app.get(
+    "/tareas/",
+    response_model=List[schemas.TareaResponse]
+)
+def listar_tareas(
+    curso_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Tarea)
+
+    if curso_id is not None:
+
+        query = query.filter(models.Tarea.curso_id == curso_id)
+
+    return query.order_by(models.Tarea.fecha_entrega).all()
 
 
 # ============================================================
@@ -1787,6 +1806,38 @@ def descargar_entrega(
         path=ruta_archivo,
         filename=entrega.nombre_original
     )
+
+
+@app.put(
+    "/entregas/{entrega_id}/calificar",
+    response_model=schemas.EntregaResponse
+)
+def calificar_entrega(
+    entrega_id: int,
+    datos: schemas.CalificarEntregaRequest,
+    db: Session = Depends(get_db)
+):
+
+    entrega = (
+        db.query(models.TareaEntrega)
+        .filter(models.TareaEntrega.id == entrega_id)
+        .first()
+    )
+
+    if not entrega:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La entrega no existe"
+        )
+
+    entrega.nota = datos.nota
+    entrega.retroalimentacion = datos.retroalimentacion
+
+    db.commit()
+    db.refresh(entrega)
+
+    return entrega
 
 
 # ============================================================

@@ -726,6 +726,9 @@ class TareaEntrega(Base):
 
     comentario = Column(Text, nullable=True)
 
+    nota = Column(Float, nullable=True)
+    retroalimentacion = Column(Text, nullable=True)
+
     fecha_entrega = Column(
         DateTime,
         default=datetime.utcnow,

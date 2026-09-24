@@ -432,6 +432,15 @@ class TareaCreate(BaseModel):
     permite_video: bool = False
 
 
+class TareaResponse(TareaCreate):
+    id: int
+    fecha_creacion: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 # ============================================================
 # ENTREGAS DE ACTIVIDADES
 # ============================================================
@@ -445,10 +454,17 @@ class EntregaResponse(BaseModel):
     nombre_original: str
     comentario: Optional[str] = None
     fecha_entrega: datetime
+    nota: Optional[float] = None
+    retroalimentacion: Optional[str] = None
 
     model_config = {
         "from_attributes": True
     }
+
+
+class CalificarEntregaRequest(BaseModel):
+    nota: float = Field(ge=0, le=5)
+    retroalimentacion: Optional[str] = None
 
 
 # ============================================================
