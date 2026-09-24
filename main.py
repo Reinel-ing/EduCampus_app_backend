@@ -2,6 +2,7 @@
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import List, Optional
+import base64
 import io
 import secrets
 import shutil
@@ -771,6 +772,88 @@ def listar_profesores(
     return db.query(
         models.Profesor
     ).all()
+
+
+# ============================================================
+# FIRMAS DIGITALES
+# ============================================================
+
+@app.get(
+    "/firmas/",
+    response_model=schemas.FirmasListResponse
+)
+def listar_firmas(
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    docentes = db.query(models.Profesor).order_by(models.Profesor.nombre).all()
+    admin = db.query(models.Administrador).order_by(models.Administrador.id).first()
+
+    return {
+        "docentes": [
+            {"id": p.id, "nombre": p.nombre, "tiene_firma": bool(p.firma_base64)}
+            for p in docentes
+        ],
+        "admin": (
+            {"id": admin.id, "nombre": admin.nombre, "tiene_firma": bool(admin.firma_base64)}
+            if admin else None
+        ),
+    }
+
+
+@app.post("/firmas/docente/{profesor_id}/")
+def subir_firma_docente(
+    profesor_id: int,
+    datos: schemas.FirmaSubirRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    profesor = (
+        db.query(models.Profesor)
+        .filter(models.Profesor.id == profesor_id)
+        .first()
+    )
+
+    if not profesor:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El docente no existe"
+        )
+
+    profesor.firma_base64 = datos.imagen_base64
+    db.commit()
+
+    return {"id": profesor.id, "nombre": profesor.nombre, "tiene_firma": True}
+
+
+@app.post("/firmas/admin/{admin_id}/")
+def subir_firma_admin(
+    admin_id: int,
+    datos: schemas.FirmaSubirRequest,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(requerir_admin)
+):
+
+    administrador = (
+        db.query(models.Administrador)
+        .filter(models.Administrador.id == admin_id)
+        .first()
+    )
+
+    if not administrador:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El administrador no existe"
+        )
+
+    administrador.firma_base64 = datos.imagen_base64
+    db.commit()
+
+    return {"id": administrador.id, "nombre": administrador.nombre, "tiene_firma": True}
 
 
 # ============================================================
@@ -2335,7 +2418,6 @@ DIRECTOR_NOMBRE = os.getenv("DIRECTOR_NOMBRE", "MARIBEL ROJAS PAYARES")
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 LOGO_COLMAS_PATH = ASSETS_DIR / "logo_colmas.png"
-FIRMA_DIRECTORA_PATH = ASSETS_DIR / "firma_directora.png"
 
 COLOR_DORADO = colors.HexColor("#F9C65F")
 COLOR_DORADO_CLARO = colors.HexColor("#FFFFCC")
@@ -2443,12 +2525,38 @@ def descargar_boletin(
 
     grado = estudiante.grado
 
-    docente_firma = None
+    docente_responsable = None
 
     if grado and grado.director_grupo:
-        docente_firma = grado.director_grupo.nombre
+        docente_responsable = grado.director_grupo
     elif areas:
-        docente_firma = areas[0][0].profesor.nombre if areas[0][0].profesor else None
+        docente_responsable = areas[0][0].profesor
+
+    if not docente_responsable or not docente_responsable.firma_base64:
+
+        nombre_docente = docente_responsable.nombre if docente_responsable else "el docente"
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"No se puede generar el boletín: falta registrar la firma digital "
+                f"de {nombre_docente}. Regístrala en Firmas digitales."
+            )
+        )
+
+    administrador = db.query(models.Administrador).order_by(models.Administrador.id).first()
+
+    if not administrador or not administrador.firma_base64:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "No se puede generar el boletín: falta registrar la firma digital "
+                "del administrador. Regístrala en Firmas digitales."
+            )
+        )
+
+    docente_firma = docente_responsable.nombre
 
     buffer = io.BytesIO()
 
@@ -2629,15 +2737,19 @@ def descargar_boletin(
 
     elementos.append(Spacer(1, 40))
 
-    if FIRMA_DIRECTORA_PATH.exists():
-        firma_directora_img = Image(str(FIRMA_DIRECTORA_PATH), width=110, height=55)
-    else:
-        firma_directora_img = Paragraph("_____________________________________", estilos["Normal"])
+    firma_directora_img = Image(
+        io.BytesIO(base64.b64decode(administrador.firma_base64)),
+        width=110, height=55
+    )
+    firma_docente_img = Image(
+        io.BytesIO(base64.b64decode(docente_responsable.firma_base64)),
+        width=110, height=55
+    )
 
     firmas = [
         [
             firma_directora_img,
-            Paragraph("_____________________________________", estilos["Normal"]),
+            firma_docente_img,
         ],
         [
             Paragraph("FIRMA DIRECTORA", estilos["Normal"]),

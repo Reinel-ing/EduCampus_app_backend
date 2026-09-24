@@ -31,6 +31,7 @@ class Administrador(Base):
     correo = Column(String(150), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     password_encrypted = Column(Text, nullable=True)
+    firma_base64 = Column(Text, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -166,6 +167,7 @@ class Profesor(Base):
     password_hash = Column(String(255), nullable=False)
     password_encrypted = Column(Text, nullable=True)
     especialidad = Column(String(150), nullable=True)
+    firma_base64 = Column(Text, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     cursos = relationship(

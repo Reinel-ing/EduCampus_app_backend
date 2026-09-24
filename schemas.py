@@ -227,6 +227,25 @@ class ProfesorResponse(ProfesorCreate):
 
 
 # ============================================================
+# FIRMAS DIGITALES
+# ============================================================
+
+class FirmaSubirRequest(BaseModel):
+    imagen_base64: str = Field(min_length=1)
+
+
+class FirmaItem(BaseModel):
+    id: int
+    nombre: str
+    tiene_firma: bool
+
+
+class FirmasListResponse(BaseModel):
+    docentes: list[FirmaItem]
+    admin: Optional[FirmaItem] = None
+
+
+# ============================================================
 # CURSOS
 # ============================================================
 
