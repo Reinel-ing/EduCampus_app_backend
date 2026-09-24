@@ -15,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from PIL import Image as PILImage
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
@@ -2423,6 +2424,34 @@ COLOR_DORADO = colors.HexColor("#F9C65F")
 COLOR_DORADO_CLARO = colors.HexColor("#FFFFCC")
 COLOR_MARRON = colors.HexColor("#8B5E34")
 
+DIRECCION_COLEGIO = (
+    "DIRECCIÓN: CALLE 17ª # 19C – 53 BARRIO DANDONG – VALLEDUPAR, "
+    "TELÉFONO: 5805964 - 3173778565"
+)
+
+
+def imagen_firma_proporcional(
+    firma_base64: str,
+    ancho_max: float = 170,
+    alto_max: float = 55
+) -> Image:
+    """Escala la imagen de la firma respetando su proporcion original (cabe
+    dentro de ancho_max x alto_max), en vez de estirarla a un tamano fijo
+    (lo que la deja vista torcida/aplastada)."""
+
+    datos = base64.b64decode(firma_base64)
+
+    with PILImage.open(io.BytesIO(datos)) as img:
+        ancho_original, alto_original = img.size
+
+    escala = min(ancho_max / ancho_original, alto_max / alto_original)
+
+    return Image(
+        io.BytesIO(datos),
+        width=ancho_original * escala,
+        height=alto_original * escala
+    )
+
 
 def calcular_desempeno(score: float) -> str:
 
@@ -2737,14 +2766,8 @@ def descargar_boletin(
 
     elementos.append(Spacer(1, 40))
 
-    firma_directora_img = Image(
-        io.BytesIO(base64.b64decode(administrador.firma_base64)),
-        width=110, height=55
-    )
-    firma_docente_img = Image(
-        io.BytesIO(base64.b64decode(docente_responsable.firma_base64)),
-        width=110, height=55
-    )
+    firma_directora_img = imagen_firma_proporcional(administrador.firma_base64)
+    firma_docente_img = imagen_firma_proporcional(docente_responsable.firma_base64)
 
     firmas = [
         [
@@ -2768,6 +2791,18 @@ def descargar_boletin(
     ]))
 
     elementos.append(tabla_firmas)
+
+    elementos.append(Spacer(1, 24))
+    elementos.append(Paragraph(
+        DIRECCION_COLEGIO,
+        ParagraphStyle(
+            "Direccion",
+            parent=estilos["Normal"],
+            fontSize=9,
+            textColor=COLOR_MARRON,
+            alignment=1
+        )
+    ))
 
     documento.build(elementos)
 
