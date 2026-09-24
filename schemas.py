@@ -270,6 +270,14 @@ class CalificacionCreate(BaseModel):
         return v
 
 
+class CalificacionResponse(CalificacionCreate):
+    id: int
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
 # ============================================================
 # OBSERVACIONES DEL BOLETÍN
 # ============================================================

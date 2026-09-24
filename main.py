@@ -894,6 +894,7 @@ def listar_estudiantes_del_curso(
 
 @app.post(
     "/calificaciones/",
+    response_model=schemas.CalificacionResponse,
     status_code=status.HTTP_201_CREATED
 )
 def crear_calificacion(
@@ -969,9 +970,76 @@ def crear_calificacion(
     return nueva_calificacion
 
 
+@app.get(
+    "/calificaciones/",
+    response_model=List[schemas.CalificacionResponse]
+)
+def listar_calificaciones(
+    student_id: int | None = None,
+    course_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Calificacion)
+
+    if student_id is not None:
+
+        query = query.filter(models.Calificacion.student_id == student_id)
+
+    if course_id is not None:
+
+        query = query.filter(models.Calificacion.course_id == course_id)
+
+    return query.all()
+
+
+@app.delete(
+    "/calificaciones/{calificacion_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def eliminar_calificacion(
+    calificacion_id: int,
+    db: Session = Depends(get_db)
+):
+
+    existente = (
+        db.query(models.Calificacion)
+        .filter(models.Calificacion.id == calificacion_id)
+        .first()
+    )
+
+    if not existente:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La calificación no existe"
+        )
+
+    db.delete(existente)
+    db.commit()
+
+
 # ============================================================
 # OBSERVACIONES DEL BOLETÍN
 # ============================================================
+
+@app.get(
+    "/observaciones/",
+    response_model=List[schemas.ObservacionResponse]
+)
+def listar_observaciones(
+    student_id: int | None = None,
+    db: Session = Depends(get_db)
+):
+
+    query = db.query(models.Observacion)
+
+    if student_id is not None:
+
+        query = query.filter(models.Observacion.student_id == student_id)
+
+    return query.all()
+
 
 @app.post(
     "/observaciones/",
