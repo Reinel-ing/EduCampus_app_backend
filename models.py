@@ -509,6 +509,45 @@ class AlertaAlumno(Base):
 
 
 # ============================================================
+# NOTIFICACIONES (acudientes)
+# ============================================================
+
+class Notificacion(Base):
+    __tablename__ = "notificaciones"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    acudiente_id = Column(
+        Integer,
+        ForeignKey("acudientes.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    estudiante_id = Column(
+        Integer,
+        ForeignKey("estudiantes.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    titulo = Column(String(200), nullable=False)
+
+    mensaje = Column(Text, nullable=False)
+
+    tipo = Column(String(30), nullable=False, default="general")
+
+    leida = Column(Boolean, default=False, nullable=False)
+
+    fecha = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    acudiente = relationship("Acudiente")
+    estudiante = relationship("Estudiante")
+
+
+# ============================================================
 # MATERIAL DIDÁCTICO
 # ============================================================
 

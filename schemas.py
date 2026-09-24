@@ -113,6 +113,8 @@ class TokenResponse(BaseModel):
     token_type: str
     rol: str
     nombre: str
+    usuario_id: int
+    correo: str
 
 
 # ============================================================
@@ -328,6 +330,34 @@ class AlertaCreate(BaseModel):
     student_id: int
     mensaje: str
     severidad: str
+
+
+# ============================================================
+# NOTIFICACIONES
+# ============================================================
+
+class NotificacionResponse(BaseModel):
+    id: int
+    acudiente_id: int
+    estudiante_id: Optional[int] = None
+    titulo: str
+    mensaje: str
+    tipo: str
+    leida: bool
+    fecha: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class AvisoRecogidaRequest(BaseModel):
+    course_id: int
+
+
+class AvisoRecogidaResponse(BaseModel):
+    acudientes_notificados: int
+    curso: str
 
 
 # ============================================================

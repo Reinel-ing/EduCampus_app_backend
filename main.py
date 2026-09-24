@@ -125,6 +125,20 @@ def requerir_admin(access_token: str) -> dict:
     return sesion
 
 
+def requerir_sesion(access_token: str) -> dict:
+
+    sesion = sesiones.get(access_token)
+
+    if not sesion:
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión no válida o expirada"
+        )
+
+    return sesion
+
+
 # ============================================================
 # BÚSQUEDA DE CUENTAS EN LAS TABLAS POR ROL
 # ============================================================
@@ -453,7 +467,9 @@ def iniciar_sesion(
         "access_token": session_id,
         "token_type": "session",
         "rol": rol,
-        "nombre": usuario.nombre
+        "nombre": usuario.nombre,
+        "usuario_id": usuario.id,
+        "correo": usuario.correo
     }
 
 
@@ -755,12 +771,17 @@ def crear_curso(
 
 @app.get("/cursos/")
 def listar_cursos(
+    instructor_id: int | None = None,
     db: Session = Depends(get_db)
 ):
 
-    return db.query(
-        models.Curso
-    ).all()
+    query = db.query(models.Curso)
+
+    if instructor_id is not None:
+
+        query = query.filter(models.Curso.instructor_id == instructor_id)
+
+    return query.all()
 
 
 # ============================================================
@@ -1145,10 +1166,144 @@ def registrar_alerta(
     )
 
     db.add(nueva_alerta)
+
+    if estudiante.acudiente_id is not None:
+
+        nueva_notificacion = models.Notificacion(
+            acudiente_id=estudiante.acudiente_id,
+            estudiante_id=estudiante.id,
+            titulo=f"Aviso sobre {estudiante.nombre}",
+            mensaje=alerta.mensaje,
+            tipo="alerta"
+        )
+
+        db.add(nueva_notificacion)
+
     db.commit()
     db.refresh(nueva_alerta)
 
     return nueva_alerta
+
+
+# ============================================================
+# NOTIFICACIONES Y AVISO DE RECOGIDA
+# ============================================================
+
+@app.post(
+    "/avisar-recogida/",
+    response_model=schemas.AvisoRecogidaResponse
+)
+def avisar_recogida(
+    solicitud: schemas.AvisoRecogidaRequest,
+    db: Session = Depends(get_db),
+    sesion: dict = Depends(requerir_sesion)
+):
+
+    curso = (
+        db.query(models.Curso)
+        .filter(models.Curso.id == solicitud.course_id)
+        .first()
+    )
+
+    if not curso:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El curso no existe"
+        )
+
+    if sesion["rol"] == "profesor" and curso.instructor_id != sesion["usuario_id"]:
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este curso no te pertenece"
+        )
+
+    elif sesion["rol"] not in ("profesor", "administrador"):
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un docente o administrador puede enviar este aviso"
+        )
+
+    matriculas = (
+        db.query(models.Matricula)
+        .filter(models.Matricula.course_id == curso.id)
+        .all()
+    )
+
+    notificados = 0
+
+    for matricula in matriculas:
+
+        estudiante = matricula.estudiante
+
+        if not estudiante or estudiante.acudiente_id is None:
+            continue
+
+        notificacion = models.Notificacion(
+            acudiente_id=estudiante.acudiente_id,
+            estudiante_id=estudiante.id,
+            titulo="Ya puede recoger a su hijo(a)",
+            mensaje=(
+                f"La clase de {curso.title} ha finalizado. "
+                f"Ya puede pasar a recoger a {estudiante.nombre} en el colegio."
+            ),
+            tipo="recogida"
+        )
+
+        db.add(notificacion)
+        notificados += 1
+
+    db.commit()
+
+    return {
+        "acudientes_notificados": notificados,
+        "curso": curso.title
+    }
+
+
+@app.get(
+    "/notificaciones/{acudiente_id}/",
+    response_model=List[schemas.NotificacionResponse]
+)
+def listar_notificaciones(
+    acudiente_id: int,
+    db: Session = Depends(get_db)
+):
+
+    return (
+        db.query(models.Notificacion)
+        .filter(models.Notificacion.acudiente_id == acudiente_id)
+        .order_by(models.Notificacion.fecha.desc())
+        .all()
+    )
+
+
+@app.post("/notificaciones/{notificacion_id}/marcar-leida/")
+def marcar_notificacion_leida(
+    notificacion_id: int,
+    db: Session = Depends(get_db)
+):
+
+    notificacion = (
+        db.query(models.Notificacion)
+        .filter(models.Notificacion.id == notificacion_id)
+        .first()
+    )
+
+    if not notificacion:
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La notificación no existe"
+        )
+
+    notificacion.leida = True
+
+    db.commit()
+
+    return {"message": "Notificación marcada como leída"}
 
 
 # ============================================================
