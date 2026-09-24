@@ -1930,6 +1930,13 @@ async def subir_entrega(
             detail="La actividad no existe"
         )
 
+    if datetime.utcnow() > tarea.fecha_entrega:
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El plazo de entrega de esta actividad ya venció"
+        )
+
     estudiante = (
         db.query(models.Estudiante)
         .filter(models.Estudiante.id == student_id)
