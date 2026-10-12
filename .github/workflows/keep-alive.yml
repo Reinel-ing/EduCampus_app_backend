@@ -2,7 +2,7 @@ name: Mantener backend despierto
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -10,4 +10,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping /health
-        run: curl -sf --max-time 30 https://educampus-backend-rwz6.onrender.com/health || echo "El backend no respondio a tiempo (probablemente estaba despertando)"
+        run: curl -sf --max-time 30 https://educampus-app-backend.onrender.com/health || echo "El backend no respondio a tiempo (probablemente estaba despertando)"
